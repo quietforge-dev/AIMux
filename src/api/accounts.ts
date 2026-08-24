@@ -35,6 +35,6 @@ export const accountsApi = {
   toggle: (id: string) => post<Account>(`/api/accounts/${id}/toggle-status`),
   priority: (id: string, priority: number) =>
     post<Account>(`/api/accounts/${id}/adjust-priority?priority=${priority}`),
-  test: (id: string, model?: string) =>
-    post<AccountTestResult>(`/api/accounts/${id}/test`, { model }),
+  test: (id: string, model?: string, signal?: AbortSignal) =>
+    post<AccountTestResult>(`/api/accounts/${id}/test`, { model }, { signal }),
 };

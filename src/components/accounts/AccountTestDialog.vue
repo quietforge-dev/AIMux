@@ -38,13 +38,13 @@
     </div>
 
     <template #footer>
-      <el-button :disabled="testing" @click="visible = false">关闭</el-button>
+      <el-button @click="closeDialog">{{ testing ? '取消测试' : '关闭' }}</el-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { accountsApi, type Account } from '../../api/accounts';
 
@@ -66,6 +66,7 @@ const visible = defineModel<boolean>({ required: true });
 const selectedModel = ref('');
 const logs = ref<LogEntry[]>([]);
 const testing = ref(false);
+const activeController = ref<AbortController>();
 const progress = ref(0);
 const progressLabel = ref('等待测试');
 const progressStatus = ref<'success' | 'exception' | undefined>();
@@ -113,6 +114,8 @@ const pretty = (value: unknown) => {
 
 const runTest = async () => {
   if (testing.value) return;
+  const controller = new AbortController();
+  activeController.value = controller;
   testing.value = true;
   progress.value = 10;
   progressLabel.value = '正在发送请求...';
@@ -123,7 +126,12 @@ const runTest = async () => {
   addLog('端点', `POST ${endpoint.value}`, 'info');
   addLog('请求体', JSON.stringify(requestBody.value, null, 2), 'request', true);
   try {
-    const result = await accountsApi.test(props.account.id, selectedModel.value || undefined);
+    const result = await accountsApi.test(
+      props.account.id,
+      selectedModel.value || undefined,
+      controller.signal,
+    );
+    if (controller.signal.aborted) return;
     progress.value = 100;
     progressLabel.value = '测试完成';
     const success = Boolean(result.success);
@@ -146,6 +154,7 @@ const runTest = async () => {
     );
     emit('finished');
   } catch (error) {
+    if (controller.signal.aborted) return;
     progress.value = 100;
     progressLabel.value = '测试异常';
     progressStatus.value = 'exception';
@@ -153,16 +162,34 @@ const runTest = async () => {
     ElMessage.error(String(error));
     emit('finished');
   } finally {
-    testing.value = false;
+    if (activeController.value === controller) {
+      activeController.value = undefined;
+      testing.value = false;
+    }
   }
 };
 
+const cancelTest = () => {
+  const controller = activeController.value;
+  if (!controller) return;
+  controller.abort();
+  activeController.value = undefined;
+  testing.value = false;
+};
+
+const closeDialog = () => {
+  cancelTest();
+  visible.value = false;
+};
+
 const handleClose = (done: () => void) => {
-  if (!testing.value) done();
+  cancelTest();
+  done();
 };
 
 watch(() => props.account.id, reset);
 onMounted(reset);
+onBeforeUnmount(cancelTest);
 </script>
 
 <style scoped lang="scss">
