@@ -1,5 +1,9 @@
 use std::time::Duration;
-use std::{cmp::Ordering, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use futures_util::{stream, StreamExt};
 use tokio::time::{interval, MissedTickBehavior};
@@ -146,18 +150,12 @@ async fn rebalance(
     pool: &sqlx::SqlitePool,
     results: Vec<(String, String, bool, String)>,
 ) -> Result<(), crate::error::AppError> {
-    for kind in ["openai", "anthropic"] {
-        let successful: Vec<_> = results
-            .iter()
-            .filter(|(_, account_type, success, _)| account_type == kind && *success)
-            .collect();
-        let Some((_, _, _, model)) = successful.first() else {
-            continue;
-        };
-        let (accounts, _) = account_dao::list(pool, 0, 10_000, Some(kind), Some("active")).await?;
+    for ((account_type, model), successful_ids) in successful_accounts_by_probe_model(&results) {
+        let (accounts, _) =
+            account_dao::list(pool, 0, 10_000, Some(&account_type), Some("active")).await?;
         let Some(candidate) = accounts
             .iter()
-            .filter(|account| successful.iter().any(|(id, _, _, _)| id == &account.id))
+            .filter(|account| successful_ids.contains(&account.id))
             .min_by(|left, right| {
                 candidate_order(
                     left.multiplier,
@@ -171,7 +169,7 @@ async fn rebalance(
         else {
             continue;
         };
-        let current = account_dao::pick_one(pool, Some(model), kind).await?;
+        let current = account_dao::pick_one(pool, Some(&model), &account_type).await?;
         if let Some(current) = current {
             if current.id != candidate.id
                 && should_promote(
@@ -186,6 +184,21 @@ async fn rebalance(
         }
     }
     Ok(())
+}
+
+pub fn successful_accounts_by_probe_model(
+    results: &[(String, String, bool, String)],
+) -> BTreeMap<(String, String), BTreeSet<String>> {
+    let mut grouped = BTreeMap::new();
+    for (account_id, account_type, success, model) in results {
+        if *success {
+            grouped
+                .entry((account_type.clone(), model.clone()))
+                .or_insert_with(BTreeSet::new)
+                .insert(account_id.clone());
+        }
+    }
+    grouped
 }
 
 pub fn candidate_order(
