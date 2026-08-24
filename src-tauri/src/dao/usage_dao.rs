@@ -196,6 +196,7 @@ pub async fn token_totals_by_account(
 pub async fn recent_cache_rates_by_account(
     pool: &SqlitePool,
     started_after: &str,
+    started_before: &str,
     limit_per_account: i64,
 ) -> Result<Vec<(String, i64, i64, i64)>, AppError> {
     Ok(sqlx::query_as::<_, (String, i64, i64, i64)>(
@@ -211,6 +212,7 @@ pub async fn recent_cache_rates_by_account(
                 FROM usage_records
                 WHERE account_id IS NOT NULL
                   AND started_at >= ?
+                  AND started_at < ?
                   AND input_tokens > 0
                   AND cached_tokens IS NOT NULL
             )
@@ -224,6 +226,7 @@ pub async fn recent_cache_rates_by_account(
         "#,
     )
     .bind(started_after)
+    .bind(started_before)
     .bind(limit_per_account)
     .fetch_all(pool)
     .await?)

@@ -7,7 +7,6 @@ use chrono::{Duration, Local, TimeZone, Utc};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 
-const RECENT_CACHE_RATE_WINDOW_HOURS: i64 = 2;
 const RECENT_CACHE_RATE_RECORD_LIMIT: i64 = 20;
 
 pub async fn tokens(pool: &SqlitePool) -> Result<serde_json::Value, AppError> {
@@ -29,7 +28,8 @@ pub async fn tokens(pool: &SqlitePool) -> Result<serde_json::Value, AppError> {
     let (accounts, _) = account_dao::list(pool, 0, 10000, None, Some("active")).await?;
     let mut account_summaries =
         range_for_accounts(pool, start_today, start_today + Duration::days(1)).await?;
-    let mut recent_cache_rates = recent_cache_rates_for_accounts(pool).await?;
+    let mut recent_cache_rates =
+        recent_cache_rates_for_accounts(pool, start_today, start_today + Duration::days(1)).await?;
     let mut account_today = Vec::new();
     for account in accounts {
         let s = account_summaries
@@ -73,13 +73,18 @@ struct RecentCacheRate {
 }
 async fn recent_cache_rates_for_accounts(
     pool: &SqlitePool,
+    start: chrono::DateTime<Utc>,
+    end: chrono::DateTime<Utc>,
 ) -> Result<HashMap<String, RecentCacheRate>, AppError> {
-    let since = (Utc::now() - Duration::hours(RECENT_CACHE_RATE_WINDOW_HOURS))
-        .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string();
-    let rows =
-        usage_dao::recent_cache_rates_by_account(pool, &since, RECENT_CACHE_RATE_RECORD_LIMIT)
-            .await?;
+    let start = start.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let end = end.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let rows = usage_dao::recent_cache_rates_by_account(
+        pool,
+        &start,
+        &end,
+        RECENT_CACHE_RATE_RECORD_LIMIT,
+    )
+    .await?;
     Ok(rows
         .into_iter()
         .map(|(account_id, input, cached, count)| {

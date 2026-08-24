@@ -45,10 +45,10 @@
       <el-table-column label="缓存率" min-width="100">
         <template #default="{ row }">{{ rate(row.cache_rate) }}</template>
       </el-table-column>
-      <el-table-column label="近2小时最近20次缓存率" min-width="180">
+      <el-table-column label="最近20次缓存率" min-width="150">
         <template #default="{ row }">
           <el-tooltip
-            :content="`近2小时内最近 ${row.recent_cache_count} 条有效使用记录，按输入Token加权计算`"
+            :content="`今日最近 ${row.recent_cache_count} 条有效使用记录，按输入Token加权计算`"
             placement="top"
           >
             <span>{{ rate(row.recent_cache_rate) }}</span>
