@@ -13,11 +13,13 @@ use std::{
     sync::Arc,
 };
 
-use axum::{middleware::from_fn_with_state, routing::get, Router};
+use axum::{extract::DefaultBodyLimit, middleware::from_fn_with_state, routing::get, Router};
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 
 use crate::{app_state::AppState, error::AppError};
+
+const MAX_REQUEST_BODY_BYTES: usize = 512 * 1024 * 1024;
 
 pub async fn serve(state: Arc<AppState>) -> Result<(), AppError> {
     let settings = state.settings.read().await.clone();
@@ -34,6 +36,7 @@ pub async fn serve(state: Arc<AppState>) -> Result<(), AppError> {
             "/health",
             get(|| async { axum::Json(serde_json::json!({"status":"ok"})) }),
         )
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         .layer(from_fn_with_state(Arc::clone(&state), middleware::auth))
         .layer(CorsLayer::permissive());
     let addr: SocketAddr = format!("{}:{}", settings.host, settings.port)
