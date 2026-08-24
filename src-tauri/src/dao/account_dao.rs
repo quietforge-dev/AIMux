@@ -6,6 +6,7 @@ use crate::{
     error::AppError,
     model::account::Account,
     schema::account_schema::{AccountCreate, AccountUpdate, AccountView},
+    utils::time::utc_now_string,
 };
 
 pub async fn get(pool: &SqlitePool, id: &str) -> Result<Option<Account>, AppError> {
@@ -108,7 +109,7 @@ pub async fn create(pool: &SqlitePool, payload: AccountCreate) -> Result<Account
         payload.priority,
         payload.multiplier,
     )?;
-    let now = now();
+    let now = utc_now_string();
     let id = Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO accounts (id,name,type,base_url,api_key_encrypted,status,priority,multiplier,test_default_model,model_mappings,supported_models,tags,notes,total_requests,total_tokens,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0,0,?,?)")
         .bind(&id).bind(payload.name.trim()).bind(&payload.account_type).bind(payload.base_url.trim_end_matches('/')).bind(payload.api_key).bind(payload.status).bind(payload.priority).bind(payload.multiplier).bind(payload.test_default_model).bind(json_text(payload.model_mappings)).bind(json_opt_vec(payload.supported_models)).bind(json_opt_vec(payload.tags)).bind(payload.notes).bind(&now).bind(&now).execute(pool).await?;
@@ -164,7 +165,7 @@ pub async fn update(
         priority,
         multiplier,
     )?;
-    let now = now();
+    let now = utc_now_string();
     sqlx::query("UPDATE accounts SET name=?,type=?,base_url=?,api_key_encrypted=?,status=?,priority=?,multiplier=?,test_default_model=?,model_mappings=?,supported_models=?,tags=?,notes=?,updated_at=? WHERE id=?")
         .bind(name).bind(account_type).bind(base_url.trim_end_matches('/')).bind(api_key).bind(status).bind(priority).bind(multiplier).bind(test_default_model).bind(model_mappings).bind(supported_models).bind(tags).bind(notes).bind(now).bind(&current_id).execute(pool).await?;
     get(pool, &current_id)
@@ -182,18 +183,19 @@ pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), AppError> {
 pub async fn save_priority(pool: &SqlitePool, id: &str, priority: i64) -> Result<(), AppError> {
     sqlx::query("UPDATE accounts SET priority=?, updated_at=? WHERE id=?")
         .bind(priority.clamp(0, 9))
-        .bind(now())
+        .bind(utc_now_string())
         .bind(id)
         .execute(pool)
         .await?;
     Ok(())
 }
 pub async fn toggle_status(pool: &SqlitePool, id: &str) -> Result<Option<Account>, AppError> {
-    sqlx::query("UPDATE accounts SET status=CASE status WHEN 'active' THEN 'disabled' ELSE 'active' END, updated_at=? WHERE id=?").bind(now()).bind(id).execute(pool).await?;
+    sqlx::query("UPDATE accounts SET status=CASE status WHEN 'active' THEN 'disabled' ELSE 'active' END, updated_at=? WHERE id=?").bind(utc_now_string()).bind(id).execute(pool).await?;
     get(pool, id).await
 }
 pub async fn mark_used(pool: &SqlitePool, id: &str) -> Result<(), AppError> {
-    sqlx::query("UPDATE accounts SET total_requests=total_requests+1,last_used_at=?,updated_at=? WHERE id=?").bind(now()).bind(now()).bind(id).execute(pool).await?;
+    let now = utc_now_string();
+    sqlx::query("UPDATE accounts SET total_requests=total_requests+1,last_used_at=?,updated_at=? WHERE id=?").bind(&now).bind(&now).bind(id).execute(pool).await?;
     Ok(())
 }
 pub async fn add_total_tokens(pool: &SqlitePool, id: &str, tokens: i64) -> Result<(), AppError> {
@@ -225,7 +227,7 @@ pub async fn adjust(
     sqlx::query(&safe)
         .bind(code)
         .bind(message)
-        .bind(now())
+        .bind(utc_now_string())
         .bind(id)
         .execute(pool)
         .await?;
@@ -288,7 +290,4 @@ fn validate(name: &str, typ: &str, url: &str, key: &str, p: i64, m: f64) -> Resu
         return Err(AppError::BadRequest("优先级或倍率超出范围".into()));
     }
     Ok(())
-}
-fn now() -> String {
-    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }

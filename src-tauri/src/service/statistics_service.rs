@@ -2,34 +2,24 @@ use crate::{
     dao::{account_dao, usage_dao},
     error::AppError,
     schema::usage_schema::TokenSummary,
+    utils::time::{local_today_utc_range, utc_datetime_string},
 };
-use chrono::{Duration, Local, TimeZone, Utc};
+use chrono::{Duration, Utc};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 
 const RECENT_CACHE_RATE_RECORD_LIMIT: i64 = 20;
 
 pub async fn tokens(pool: &SqlitePool) -> Result<serde_json::Value, AppError> {
-    let today = Local::now().date_naive();
-    let start_today = Local
-        .from_local_datetime(&today.and_hms_opt(0, 0, 0).unwrap())
-        .single()
-        .unwrap()
-        .with_timezone(&Utc);
+    let (start_today, end_today) = local_today_utc_range();
     let start_yesterday = start_today - Duration::days(1);
     let total = range(pool, None, None).await?;
     let yesterday = range(pool, Some(start_yesterday), Some(start_today)).await?;
-    let today_summary = range(
-        pool,
-        Some(start_today),
-        Some(start_today + Duration::days(1)),
-    )
-    .await?;
+    let today_summary = range(pool, Some(start_today), Some(end_today)).await?;
     let (accounts, _) = account_dao::list(pool, 0, 10000, None, Some("active")).await?;
-    let mut account_summaries =
-        range_for_accounts(pool, start_today, start_today + Duration::days(1)).await?;
+    let mut account_summaries = range_for_accounts(pool, start_today, end_today).await?;
     let mut recent_cache_rates =
-        recent_cache_rates_for_accounts(pool, start_today, start_today + Duration::days(1)).await?;
+        recent_cache_rates_for_accounts(pool, start_today, end_today).await?;
     let mut account_today = Vec::new();
     for account in accounts {
         let s = account_summaries
@@ -47,8 +37,8 @@ async fn range(
     start: Option<chrono::DateTime<Utc>>,
     end: Option<chrono::DateTime<Utc>>,
 ) -> Result<TokenSummary, AppError> {
-    let start = start.map(|value| value.format("%Y-%m-%dT%H:%M:%SZ").to_string());
-    let end = end.map(|value| value.format("%Y-%m-%dT%H:%M:%SZ").to_string());
+    let start = start.map(utc_datetime_string);
+    let end = end.map(utc_datetime_string);
     let (a, b, c, d) = usage_dao::token_totals(pool, start.as_deref(), end.as_deref()).await?;
     Ok(summary(a, b, c, d))
 }
@@ -57,8 +47,8 @@ pub async fn range_for_accounts(
     start: chrono::DateTime<Utc>,
     end: chrono::DateTime<Utc>,
 ) -> Result<HashMap<String, TokenSummary>, AppError> {
-    let start = start.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let end = end.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let start = utc_datetime_string(start);
+    let end = utc_datetime_string(end);
     let rows = usage_dao::token_totals_by_account(pool, &start, &end).await?;
     Ok(rows
         .into_iter()
@@ -76,8 +66,8 @@ async fn recent_cache_rates_for_accounts(
     start: chrono::DateTime<Utc>,
     end: chrono::DateTime<Utc>,
 ) -> Result<HashMap<String, RecentCacheRate>, AppError> {
-    let start = start.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let end = end.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let start = utc_datetime_string(start);
+    let end = utc_datetime_string(end);
     let rows = usage_dao::recent_cache_rates_by_account(
         pool,
         &start,

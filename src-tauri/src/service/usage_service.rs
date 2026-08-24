@@ -3,8 +3,8 @@ use crate::{
     error::AppError,
     model::usage_record::UsageRecord,
     schema::usage_schema::{UsageResponse, UsageSummary},
+    utils::time::utc_days_ago_string,
 };
-use chrono::{Duration, Utc};
 use sqlx::SqlitePool;
 
 pub async fn list(
@@ -83,11 +83,5 @@ pub async fn cleanup(pool: &SqlitePool, days: i64) -> Result<i64, AppError> {
     if !matches!(days, 7 | 30 | 90) {
         return Err(AppError::BadRequest("清理天数只支持 7、30 或 90 天".into()));
     }
-    usage_dao::cleanup(
-        pool,
-        &(Utc::now() - Duration::days(days))
-            .format("%Y-%m-%dT%H:%M:%SZ")
-            .to_string(),
-    )
-    .await
+    usage_dao::cleanup(pool, &utc_days_ago_string(days)).await
 }

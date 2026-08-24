@@ -14,6 +14,7 @@ pub mod model;
 pub mod schema;
 pub mod service;
 pub mod upstream;
+pub mod utils;
 
 use std::sync::Arc;
 

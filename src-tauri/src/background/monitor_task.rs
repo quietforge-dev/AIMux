@@ -9,6 +9,7 @@ use crate::{
     dao::{account_dao, model_dao, monitor_dao},
     model::{account::Account, monitor_record::MonitorRecord},
     service::account_service,
+    utils::time::{elapsed_millis, utc_now_string},
 };
 
 const MONITOR_CONCURRENCY: usize = 5;
@@ -136,8 +137,8 @@ async fn monitor_account(
             account_name: account.name.clone(),
             account_type: result_account_type.clone(),
             model: Some(result_model.clone()),
-            checked_at: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-            duration_ms: Some(started.elapsed().as_millis() as i64),
+            checked_at: utc_now_string(),
+            duration_ms: Some(elapsed_millis(started)),
             success: result.0,
             status_code: result.1,
             error_code: if result.0 {

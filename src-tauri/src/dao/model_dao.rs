@@ -5,6 +5,7 @@ use crate::{
     error::AppError,
     model::catalog_model::CatalogModel,
     schema::model_schema::{ModelCreate, ModelUpdate, ModelView},
+    utils::time::utc_now_string,
 };
 
 pub async fn list(pool: &SqlitePool, kind: Option<&str>) -> Result<Vec<CatalogModel>, AppError> {
@@ -36,7 +37,7 @@ pub async fn default_name(pool: &SqlitePool, kind: &str) -> Result<Option<String
     )
 }
 pub async fn insert_missing(pool: &SqlitePool, defaults: &[(&str, &str)]) -> Result<(), AppError> {
-    let now = now();
+    let now = utc_now_string();
     for (kind, name) in defaults {
         sqlx::query("INSERT OR IGNORE INTO models(id,name,type,is_default,created_at,updated_at) VALUES(?,?,?,0,?,?)")
             .bind(Uuid::new_v4().to_string())
@@ -63,7 +64,7 @@ pub async fn create(pool: &SqlitePool, p: ModelCreate) -> Result<CatalogModel, A
         return Err(AppError::BadRequest("该类型下的模型名称已存在".into()));
     }
     let id = Uuid::new_v4().to_string();
-    let now = now();
+    let now = utc_now_string();
     sqlx::query(
         "INSERT INTO models(id,name,type,is_default,created_at,updated_at) VALUES(?,?,?,0,?,?)",
     )
@@ -104,7 +105,7 @@ pub async fn update(
         .bind(name)
         .bind(kind)
         .bind(is_default)
-        .bind(now())
+        .bind(utc_now_string())
         .bind(&current.id)
         .execute(pool)
         .await?;
@@ -125,12 +126,12 @@ pub async fn set_default(
 ) -> Result<CatalogModel, AppError> {
     let mut transaction = pool.begin().await?;
     sqlx::query("UPDATE models SET is_default=0,updated_at=? WHERE type=?")
-        .bind(now())
+        .bind(utc_now_string())
         .bind(&current.r#type)
         .execute(&mut *transaction)
         .await?;
     sqlx::query("UPDATE models SET is_default=1,updated_at=? WHERE id=?")
-        .bind(now())
+        .bind(utc_now_string())
         .bind(&current.id)
         .execute(&mut *transaction)
         .await?;
@@ -156,7 +157,7 @@ pub async fn ensure_defaults(pool: &SqlitePool) -> Result<(), AppError> {
             .await?
             {
                 sqlx::query("UPDATE models SET is_default=1,updated_at=? WHERE id=?")
-                    .bind(now())
+                    .bind(utc_now_string())
                     .bind(item.id)
                     .execute(pool)
                     .await?;
@@ -174,7 +175,4 @@ pub fn to_view(m: CatalogModel) -> ModelView {
         created_at: m.created_at,
         updated_at: m.updated_at,
     }
-}
-fn now() -> String {
-    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }

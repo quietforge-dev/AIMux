@@ -2,6 +2,7 @@ use crate::{
     app_state::AppState,
     dao::{account_dao, monitor_dao},
     error::AppError,
+    utils::time::utc_hours_ago_string,
 };
 use axum::{
     extract::{Query, State},
@@ -23,9 +24,7 @@ async fn records(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let (accounts, _) = account_dao::list(&s.pool, 0, 10000, None, Some("active")).await?;
     let ids = accounts.iter().map(|a| a.id.clone()).collect::<Vec<_>>();
-    let since = (chrono::Utc::now() - chrono::Duration::hours(2))
-        .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string();
+    let since = utc_hours_ago_string(2);
     let rows = monitor_dao::list_grouped(&s.pool, &ids, q.limit.unwrap_or(30).clamp(1, 30), &since)
         .await?;
     let mut grouped: HashMap<String, Vec<_>> = HashMap::new();

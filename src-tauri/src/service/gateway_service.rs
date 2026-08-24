@@ -17,6 +17,7 @@ use crate::{
     gateway::dto,
     model::usage_record::UsageRecord,
     service::{account_service, model_service},
+    utils::time::{elapsed_millis, utc_datetime_string, utc_now_string},
 };
 
 pub async fn forward(
@@ -211,7 +212,7 @@ pub async fn forward(
                 }
             };
             // 每条使用记录对应一次上游尝试，首字耗时必须从该次尝试开始计算。
-            let first_token_ms = Some(started.elapsed().as_millis() as i64);
+            let first_token_ms = Some(elapsed_millis(started));
             let stream_record = UsageRecord {
                 id: Uuid::new_v4().to_string(),
                 trace_id: trace_id.clone(),
@@ -324,8 +325,8 @@ pub async fn forward(
                     match usage_dao::finish_stream(
                         &pool_for_stream,
                         id,
-                        &now(),
-                        started_for_stream.elapsed().as_millis() as i64,
+                        &utc_now_string(),
+                        elapsed_millis(started_for_stream),
                         first_token_ms,
                         success,
                         Some(status_for_stream),
@@ -473,8 +474,8 @@ async fn record(
     tokens: Option<(Option<i64>, Option<i64>, Option<i64>, Option<i64>)>,
 ) -> Result<(), AppError> {
     let (input, output, total, cached) = tokens.unwrap_or((None, None, None, None));
-    let duration_ms = started.elapsed().as_millis() as i64;
-    let ended_at = now();
+    let duration_ms = elapsed_millis(started);
+    let ended_at = utc_now_string();
     let started_at = started_at(started);
     let record = UsageRecord {
         id: Uuid::new_v4().to_string(),
@@ -509,13 +510,11 @@ async fn record(
 }
 
 fn started_at(started: Instant) -> String {
-    chrono::Utc::now()
-        .checked_sub_signed(chrono::Duration::milliseconds(
-            started.elapsed().as_millis() as i64,
-        ))
-        .unwrap_or_else(chrono::Utc::now)
-        .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string()
+    utc_datetime_string(
+        chrono::Utc::now()
+            .checked_sub_signed(chrono::Duration::milliseconds(elapsed_millis(started)))
+            .unwrap_or_else(chrono::Utc::now),
+    )
 }
 
 #[derive(Debug)]
@@ -579,8 +578,4 @@ pub async fn models(pool: &SqlitePool, kind: &str) -> Result<Value, AppError> {
     Ok(
         json!({"object":"list","data":items.into_iter().map(|model|json!({"id":model.name,"object":"model","owned_by":"aimux"})).collect::<Vec<_>>() }),
     )
-}
-
-fn now() -> String {
-    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
