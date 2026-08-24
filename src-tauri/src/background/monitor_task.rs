@@ -6,9 +6,10 @@ use tokio::time::{interval, MissedTickBehavior};
 
 use crate::{
     app_state::AppState,
-    dao::{account_dao, model_dao, monitor_dao},
+    dao::{account_dao, monitor_dao},
     model::{account::Account, monitor_record::MonitorRecord},
-    service::account_service,
+    service::{account_probe_service, account_service},
+    upstream::error::response_body,
     utils::time::{elapsed_millis, utc_now_string},
 };
 
@@ -54,33 +55,17 @@ async fn monitor_account(
     state: &AppState,
     account: Account,
 ) -> Result<Option<(String, String, bool, String)>, crate::error::AppError> {
-    let model = match account.test_default_model.clone() {
-        Some(value) => Some(value),
-        None => model_dao::default_name(&state.pool, &account.r#type).await?,
-    };
-    let Some(model) = model else {
+    let Some(probe) = account_probe_service::prepare(&state.pool, &account, None).await? else {
         return Ok(None);
     };
+    let model = probe.model.clone();
     let started = std::time::Instant::now();
     let settings = state.settings.read().await.clone();
-    let endpoint = if account.r#type == "anthropic" {
-        "/v1/messages"
-    } else {
-        "/v1/chat/completions"
-    };
-    let upstream_model = account_service::mapping(&account, Some(&model)).unwrap_or(model.clone());
-    let body = if account.r#type == "anthropic" {
-        serde_json::json!({"model": upstream_model, "max_tokens": 1, "messages": [{"role":"user","content":"ping"}]})
-    } else {
-        serde_json::json!({"model": upstream_model, "max_tokens": 1, "reasoning_effort":"low", "messages": [{"role":"user","content":"ping"}]})
-    };
-    let result = match crate::upstream::client::post_with_timeout(
+    let result = match account_probe_service::send(
         &account,
-        endpoint,
-        &body,
+        &probe,
         &settings,
-        &[],
-        MONITOR_REQUEST_TIMEOUT,
+        Some(MONITOR_REQUEST_TIMEOUT),
     )
     .await
     {
@@ -97,8 +82,7 @@ async fn monitor_account(
                 None
             } else {
                 let bytes = response.bytes().await.unwrap_or_default();
-                let response_body =
-                    String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).to_string();
+                let response_body = response_body(&bytes);
                 tracing::error!(
                     account_id = %account.id,
                     account_name = %account.name,

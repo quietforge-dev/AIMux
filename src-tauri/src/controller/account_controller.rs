@@ -1,9 +1,10 @@
 use crate::{
     app_state::AppState,
-    dao::{account_dao, model_dao},
+    dao::account_dao,
     error::AppError,
     schema::account_schema::{AccountCreate, AccountUpdate, TestRequest},
-    service::account_service,
+    service::{account_probe_service, account_service},
+    upstream::error::response_body,
 };
 use axum::{
     extract::{Path, Query, State},
@@ -119,31 +120,19 @@ async fn test(
     let account = account_dao::get(&s.pool, &id)
         .await?
         .ok_or_else(|| AppError::NotFound("账号不存在".into()))?;
-    let fallback = model_dao::default_name(&s.pool, &account.r#type).await?;
-    let model = p.model.or(account.test_default_model.clone()).or(fallback);
-    let Some(model) = model else {
+    let Some(probe) = account_probe_service::prepare(&s.pool, &account, p.model.as_deref()).await?
+    else {
         return Err(AppError::BadRequest("没有可用测试模型".into()));
     };
-    let endpoint = if account.r#type == "anthropic" {
-        "/v1/messages"
-    } else {
-        "/v1/chat/completions"
-    };
-    let upstream_model = account_service::mapping(&account, Some(&model)).unwrap_or(model.clone());
-    let body = if account.r#type == "anthropic" {
-        serde_json::json!({"model":upstream_model,"max_tokens":1,"messages":[{"role":"user","content":"ping"}]})
-    } else {
-        serde_json::json!({"model":upstream_model,"max_tokens":1,"messages":[{"role":"user","content":"ping"}]})
-    };
+    let model = probe.model.clone();
     let settings = s.settings.read().await.clone();
-    let response = crate::upstream::client::post(&account, endpoint, &body, &settings, &[]).await;
+    let response = account_probe_service::send(&account, &probe, &settings, None).await;
     match response {
         Ok(r) => {
             let status = r.status();
             let bytes = r.bytes().await.unwrap_or_default();
             let ok = status.is_success();
-            let response_body =
-                String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).to_string();
+            let response_body = response_body(&bytes);
             if ok {
                 tracing::info!(
                     account_id = %account.id,

@@ -16,7 +16,8 @@ use crate::{
     error::AppError,
     gateway::dto,
     model::usage_record::UsageRecord,
-    service::{account_service, model_service},
+    service::{account_service, model_service, scheduler_service},
+    upstream::error::response_body,
     utils::time::{elapsed_millis, utc_datetime_string, utc_now_string},
 };
 
@@ -30,7 +31,9 @@ pub async fn forward(
 ) -> Result<Response, AppError> {
     let requested = dto::model(&body).map(str::to_owned);
     let reasoning_effort = dto::reasoning_effort(&body);
-    let max_attempts = settings.request_retry_attempts.clamp(1, 20) as i64;
+    let max_attempts = i64::from(scheduler_service::retry_limit(
+        settings.request_retry_attempts,
+    ));
     let trace_id = Uuid::new_v4().to_string();
     let mut last = (
         StatusCode::BAD_GATEWAY,
@@ -118,7 +121,7 @@ pub async fn forward(
             .to_owned();
         if !status.is_success() {
             let bytes = response.bytes().await.unwrap_or_default();
-            let message = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).to_string();
+            let message = response_body(&bytes);
             tracing::error!(
                 trace_id = %trace_id,
                 account_id = %account.id,

@@ -1,3 +1,4 @@
+pub mod account_probe_service;
 pub mod account_service;
 pub mod gateway_service;
 pub mod model_service;
