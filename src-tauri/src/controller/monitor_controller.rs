@@ -22,7 +22,7 @@ async fn records(
     State(s): State<Arc<AppState>>,
     Query(q): Query<Q>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let (accounts, _) = account_dao::list(&s.pool, 0, 10000, None, Some("active")).await?;
+    let (accounts, _) = account_dao::list(&s.pool, 0, 10000, None, Some("active"), None).await?;
     let ids = accounts.iter().map(|a| a.id.clone()).collect::<Vec<_>>();
     let since = utc_hours_ago_string(2);
     let rows = monitor_dao::list_grouped(&s.pool, &ids, q.limit.unwrap_or(30).clamp(1, 30), &since)

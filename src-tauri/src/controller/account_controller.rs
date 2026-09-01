@@ -23,6 +23,7 @@ pub struct AccountQuery {
     #[serde(rename = "type")]
     pub account_type: Option<String>,
     pub status: Option<String>,
+    pub name: Option<String>,
 }
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
@@ -45,6 +46,7 @@ async fn list(
         q.limit.unwrap_or(50).clamp(1, 200),
         q.account_type.as_deref(),
         q.status.as_deref(),
+        q.name.as_deref(),
     )
     .await?;
     Ok(Json(

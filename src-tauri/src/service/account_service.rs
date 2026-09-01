@@ -15,7 +15,7 @@ pub async fn record_failure(
     code: Option<&str>,
     message: Option<&str>,
 ) -> Result<(), AppError> {
-    account_dao::adjust(pool, id, false, "request", code, message).await
+    account_dao::adjust(pool, id, false, "gateway", code, message).await
 }
 pub async fn record_success(pool: &SqlitePool, id: &str) -> Result<(), AppError> {
     account_dao::adjust(pool, id, true, "request", None, None).await

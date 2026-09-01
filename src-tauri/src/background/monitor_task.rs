@@ -35,7 +35,8 @@ pub async fn run(state: Arc<AppState>) {
 }
 
 async fn round(state: &Arc<AppState>) -> Result<(), crate::error::AppError> {
-    let (accounts, _) = account_dao::list(&state.pool, 0, 10_000, None, Some("active")).await?;
+    let (accounts, _) =
+        account_dao::list(&state.pool, 0, 10_000, None, Some("active"), None).await?;
     let mut completed = Vec::with_capacity(accounts.len());
     let mut pending = stream::iter(accounts.into_iter().enumerate())
         .map(|(index, account)| async move {
@@ -152,7 +153,7 @@ async fn rebalance(
 ) -> Result<(), crate::error::AppError> {
     for ((account_type, model), successful_ids) in successful_accounts_by_probe_model(&results) {
         let (accounts, _) =
-            account_dao::list(pool, 0, 10_000, Some(&account_type), Some("active")).await?;
+            account_dao::list(pool, 0, 10_000, Some(&account_type), Some("active"), None).await?;
         let Some(candidate) = accounts
             .iter()
             .filter(|account| successful_ids.contains(&account.id))

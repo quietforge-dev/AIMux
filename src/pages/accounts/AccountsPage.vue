@@ -8,6 +8,21 @@
       </div>
     </div>
 
+    <div class="account-filters">
+      <el-input
+        v-model="nameFilter"
+        clearable
+        placeholder="按名称搜索"
+        class="account-name-filter"
+        @keyup.enter="load"
+      />
+      <el-select v-model="typeFilter" clearable placeholder="全部类型" class="account-type-filter">
+        <el-option label="OpenAI" value="openai" />
+        <el-option label="Anthropic" value="anthropic" />
+      </el-select>
+      <el-button type="primary" :loading="store.loading" @click="load">查询</el-button>
+    </div>
+
     <el-tabs v-model="statusFilter" class="account-status-tabs" @tab-change="() => load()">
       <el-tab-pane label="全部" name="all" />
       <el-tab-pane label="启用" name="active" />
@@ -95,6 +110,8 @@ const editingAccount = ref<Account>();
 const testDialog = ref(false);
 const testAccount = ref<Account>();
 const statusFilter = ref<'all' | Account['status']>('active');
+const nameFilter = ref('');
+const typeFilter = ref<Account['type']>();
 const testModels = computed(() => {
   const account = testAccount.value;
   if (!account) return [];
@@ -105,7 +122,7 @@ const SLOW_DURATION_MS = 20_000;
 
 const load = async () => {
   const status = statusFilter.value === 'all' ? undefined : statusFilter.value;
-  await Promise.all([store.load(status), models.load()]);
+  await Promise.all([store.load(status, nameFilter.value, typeFilter.value), models.load()]);
 };
 
 const open = async (row?: Account) => {
@@ -161,6 +178,21 @@ onMounted(load);
 </script>
 
 <style scoped>
+.account-filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.account-name-filter {
+  width: 240px;
+}
+
+.account-type-filter {
+  width: 150px;
+}
+
 .account-status-tabs {
   margin-bottom: 12px;
 }

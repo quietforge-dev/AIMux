@@ -24,6 +24,7 @@ pub async fn list(
     limit: i64,
     account_type: Option<&str>,
     status: Option<&str>,
+    name: Option<&str>,
 ) -> Result<(Vec<Account>, i64), AppError> {
     let mut sql = String::from("SELECT * FROM accounts WHERE 1=1");
     let mut count = String::from("SELECT COUNT(*) FROM accounts WHERE 1=1");
@@ -35,6 +36,10 @@ pub async fn list(
         sql.push_str(" AND status = ?");
         count.push_str(" AND status = ?");
     }
+    if name.is_some() {
+        sql.push_str(" AND lower(name) LIKE lower(?)");
+        count.push_str(" AND lower(name) LIKE lower(?)");
+    }
     sql.push_str(" ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, priority DESC, multiplier ASC, monitor_average_duration_ms IS NULL ASC, monitor_average_duration_ms ASC, lower(name), id LIMIT ? OFFSET ?");
     let mut query = sqlx::query_as::<_, Account>(&sql);
     if let Some(value) = account_type {
@@ -43,6 +48,9 @@ pub async fn list(
     if let Some(value) = status {
         query = query.bind(value);
     }
+    if let Some(value) = name {
+        query = query.bind(format!("%{}%", value.trim()));
+    }
     let accounts = query.bind(limit).bind(offset).fetch_all(pool).await?;
     let mut total_query = sqlx::query_scalar::<_, i64>(&count);
     if let Some(value) = account_type {
@@ -50,6 +58,9 @@ pub async fn list(
     }
     if let Some(value) = status {
         total_query = total_query.bind(value);
+    }
+    if let Some(value) = name {
+        total_query = total_query.bind(format!("%{}%", value.trim()));
     }
     Ok((accounts, total_query.fetch_one(pool).await?))
 }
@@ -220,6 +231,8 @@ pub async fn adjust(
         } else {
             "priority + 1"
         }
+    } else if kind == "gateway" {
+        "priority - 2"
     } else {
         "priority - 1"
     };

@@ -16,7 +16,7 @@ pub async fn tokens(pool: &SqlitePool) -> Result<serde_json::Value, AppError> {
     let total = range(pool, None, None).await?;
     let yesterday = range(pool, Some(start_yesterday), Some(start_today)).await?;
     let today_summary = range(pool, Some(start_today), Some(end_today)).await?;
-    let (accounts, _) = account_dao::list(pool, 0, 10000, None, Some("active")).await?;
+    let (accounts, _) = account_dao::list(pool, 0, 10000, None, Some("active"), None).await?;
     let mut account_summaries = range_for_accounts(pool, start_today, end_today).await?;
     let mut recent_cache_rates =
         recent_cache_rates_for_accounts(pool, start_today, end_today).await?;

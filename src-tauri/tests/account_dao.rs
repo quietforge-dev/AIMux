@@ -1,5 +1,5 @@
 use aimux_lib::{
-    dao::account_dao::{create, get, list, pick_one},
+    dao::account_dao::{adjust, create, get, list, pick_one},
     database::connect,
     schema::account_schema::AccountCreate,
 };
@@ -60,7 +60,7 @@ async fn sorts_same_multiplier_by_monitor_average_duration_with_unknown_last() {
             .await
             .expect("写入平均耗时失败");
     }
-    let (listed, _) = list(&pool, 0, 20, None, None)
+    let (listed, _) = list(&pool, 0, 20, None, None, None)
         .await
         .expect("查询账号列表失败");
     assert_eq!(
@@ -70,6 +70,11 @@ async fn sorts_same_multiplier_by_monitor_average_duration_with_unknown_last() {
             .collect::<Vec<_>>(),
         ["faster", "slower", "unknown"]
     );
+    let (filtered, total) = list(&pool, 0, 20, None, None, Some("FAST"))
+        .await
+        .expect("按名称筛选账号失败");
+    assert_eq!(total, 1);
+    assert_eq!(filtered[0].name, "faster");
     assert_eq!(
         pick_one(&pool, None, "openai")
             .await
@@ -78,6 +83,75 @@ async fn sorts_same_multiplier_by_monitor_average_duration_with_unknown_last() {
             .name,
         "faster"
     );
+    pool.close().await;
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn gateway_failures_reduce_priority_by_two_while_other_failures_reduce_by_one() {
+    let path = std::env::temp_dir().join(format!("aimux-account-{}.sqlite3", uuid::Uuid::new_v4()));
+    let pool = connect(&path).await.expect("创建数据库失败");
+    let account = create(&pool, input("priority", "https://example.test".into()))
+        .await
+        .expect("创建账号失败");
+
+    adjust(
+        &pool,
+        &account.id,
+        false,
+        "gateway",
+        Some("upstream_error"),
+        None,
+    )
+    .await
+    .expect("记录网关失败失败");
+    assert_eq!(
+        get(&pool, &account.id)
+            .await
+            .expect("读取账号失败")
+            .expect("账号不存在")
+            .priority,
+        3
+    );
+
+    adjust(
+        &pool,
+        &account.id,
+        false,
+        "request",
+        Some("test_failed"),
+        None,
+    )
+    .await
+    .expect("记录测试失败失败");
+    assert_eq!(
+        get(&pool, &account.id)
+            .await
+            .expect("读取账号失败")
+            .expect("账号不存在")
+            .priority,
+        2
+    );
+
+    adjust(
+        &pool,
+        &account.id,
+        false,
+        "monitor",
+        Some("monitor_failed"),
+        None,
+    )
+    .await
+    .expect("记录监控失败失败");
+    assert_eq!(
+        get(&pool, &account.id)
+            .await
+            .expect("读取账号失败")
+            .expect("账号不存在")
+            .priority,
+        1
+    );
+
     pool.close().await;
     let _ = std::fs::remove_file(path);
 }
