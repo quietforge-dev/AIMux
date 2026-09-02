@@ -8,7 +8,12 @@ pub fn reasoning_effort(body: &Value) -> Option<String> {
     let effort = body
         .get("reasoning_effort")
         .filter(|value| !value.is_null())
-        .or_else(|| body.get("reasoning").and_then(|value| value.get("effort")))?;
+        .or_else(|| body.get("reasoning").and_then(|value| value.get("effort")))
+        .or_else(|| {
+            body.get("output_config")
+                .and_then(|value| value.get("effort"))
+        })
+        .or_else(|| body.get("effort"))?;
     effort.as_str().map(str::to_owned).or_else(|| {
         if effort.is_null() {
             None

@@ -15,6 +15,14 @@ fn reads_reasoning_effort_from_supported_request_shapes() {
         reasoning_effort(&json!({"reasoning_effort": null, "reasoning": {"effort": "medium"}})),
         Some("medium".into())
     );
+    assert_eq!(
+        reasoning_effort(&json!({"output_config": {"effort": "high"}})),
+        Some("high".into())
+    );
+    assert_eq!(
+        reasoning_effort(&json!({"effort": "low"})),
+        Some("low".into())
+    );
     assert_eq!(reasoning_effort(&json!({})), None);
 }
 

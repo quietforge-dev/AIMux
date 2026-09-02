@@ -13,3 +13,8 @@ pub struct SettingsPayload {
     pub local_token: String,
     pub launch_at_login: bool,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct MonitoringSettingsUpdate {
+    pub monitoring_enabled: bool,
+}

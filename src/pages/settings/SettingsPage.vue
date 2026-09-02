@@ -22,9 +22,6 @@
           <el-form-item label="重试次数">
             <el-input-number v-model="form.request_retry_attempts" :min="1" :max="20" />
           </el-form-item>
-          <el-form-item label="账号监控">
-            <el-switch v-model="form.monitoring_enabled" />
-          </el-form-item>
           <el-form-item label="开机自启">
             <el-switch v-model="form.launch_at_login" />
           </el-form-item>

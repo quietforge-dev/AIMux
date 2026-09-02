@@ -14,4 +14,6 @@ export type Settings = {
 export const settingsApi = {
   get: () => get<Settings>('/api/settings'),
   update: (v: Settings) => put<Settings>('/api/settings', v),
+  updateMonitoring: (monitoring_enabled: boolean) =>
+    put<{ monitoring_enabled: boolean }>('/api/settings/monitoring', { monitoring_enabled }),
 };

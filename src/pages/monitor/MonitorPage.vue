@@ -2,11 +2,14 @@
   <div class="page">
     <div class="page-toolbar">
       <h2 class="page-title">监控管理</h2>
-      <div>
-        <el-tag :type="enabled ? 'success' : 'info'">
-          {{ enabled ? '监控已开启' : '监控已关闭' }}
-        </el-tag>
-        <el-button style="margin-left: 12px" :loading="loading" @click="load">刷新</el-button>
+      <div class="monitor-actions">
+        <el-switch
+          v-model="enabled"
+          active-text="账号监控"
+          :loading="savingEnabled"
+          :before-change="changeEnabled"
+        />
+        <el-button :loading="loading" @click="load">刷新</el-button>
       </div>
     </div>
 
@@ -65,12 +68,15 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue';
 import { monitorApi, type MonitorItem, type MonitorRecord } from '../../api/monitor';
+import { settingsApi } from '../../api/settings';
+import { ElMessage } from 'element-plus';
 
 const STATUS_COUNT = 30;
 const SLOW_THRESHOLD = 20_000;
 const items = ref<MonitorItem[]>([]);
 const loading = ref(false);
 const enabled = ref(false);
+const savingEnabled = ref(false);
 let timer: number | undefined;
 
 const load = async () => {
@@ -82,6 +88,21 @@ const load = async () => {
     enabled.value = result.monitoring_enabled;
   } finally {
     loading.value = false;
+  }
+};
+
+const changeEnabled = async () => {
+  const next = !enabled.value;
+  savingEnabled.value = true;
+  try {
+    await settingsApi.updateMonitoring(next);
+    ElMessage.success(next ? '账号监控已开启' : '账号监控已关闭');
+    return true;
+  } catch (error) {
+    ElMessage.error(`更新账号监控失败：${String(error)}`);
+    return false;
+  } finally {
+    savingEnabled.value = false;
   }
 };
 
@@ -127,6 +148,12 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.monitor-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .checks {
   display: flex;
   gap: 0;
