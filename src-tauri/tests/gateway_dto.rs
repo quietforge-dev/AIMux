@@ -29,6 +29,39 @@ fn reads_nested_responses_usage_and_cached_tokens() {
 }
 
 #[test]
+fn normalizes_anthropic_cache_usage_to_full_input_tokens() {
+    assert_eq!(
+        usage(&json!({
+            "usage": {
+                "input_tokens": 100,
+                "cache_creation_input_tokens": 200,
+                "cache_read_input_tokens": 700,
+                "output_tokens": 25
+            }
+        })),
+        (Some(1000), Some(25), Some(1025), Some(700))
+    );
+}
+
+#[test]
+fn reads_anthropic_cache_creation_ttl_breakdown_when_total_is_missing() {
+    assert_eq!(
+        usage(&json!({
+            "usage": {
+                "input_tokens": 10,
+                "cache_read_input_tokens": 80,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 20,
+                    "ephemeral_1h_input_tokens": 40
+                },
+                "output_tokens": 5
+            }
+        })),
+        (Some(150), Some(5), Some(155), Some(80))
+    );
+}
+
+#[test]
 fn merges_usage_fields_across_sse_events() {
     let body = br#"data: {"response":{"usage":{"input_tokens":12}}}
 
@@ -37,6 +70,23 @@ data: {"type":"response.completed","response":{"usage":{"output_tokens":3,"promp
 data: [DONE]
 "#;
     assert_eq!(usage_from_sse(body), (Some(12), Some(3), Some(15), Some(5)));
+}
+
+#[test]
+fn merges_anthropic_stream_usage_across_message_events() {
+    let body = br#"event: message_start
+data: {"type":"message_start","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":20,"cache_read_input_tokens":70}}}
+
+event: message_delta
+data: {"type":"message_delta","usage":{"output_tokens":5}}
+
+event: message_stop
+data: {"type":"message_stop"}
+"#;
+    assert_eq!(
+        usage_from_sse(body),
+        (Some(100), Some(5), Some(105), Some(70))
+    );
 }
 
 #[test]

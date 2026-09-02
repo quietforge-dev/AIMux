@@ -33,7 +33,7 @@ fn usage_fields(body: &Value) -> (Option<i64>, Option<i64>, Option<i64>, Option<
     let Some(u) = usage_object(body) else {
         return (None, None, None, None);
     };
-    let input = u
+    let standard_input = u
         .get("prompt_tokens")
         .or_else(|| u.get("input_tokens"))
         .and_then(Value::as_i64);
@@ -42,12 +42,42 @@ fn usage_fields(body: &Value) -> (Option<i64>, Option<i64>, Option<i64>, Option<
         .or_else(|| u.get("output_tokens"))
         .and_then(Value::as_i64);
     let total = u.get("total_tokens").and_then(Value::as_i64);
-    let cached = u
+    let standard_cached = u
         .get("cached_tokens")
         .or_else(|| u.pointer("/prompt_tokens_details/cached_tokens"))
         .or_else(|| u.pointer("/input_tokens_details/cached_tokens"))
         .and_then(Value::as_i64);
-    (input, output, total, cached)
+
+    // Anthropic reports uncached input, cache creation, and cache reads separately.
+    // Normalize input to the full prompt size so cache-rate calculations match OpenAI.
+    let anthropic_usage = u.get("cache_read_input_tokens").is_some()
+        || u.get("cache_creation_input_tokens").is_some()
+        || u.get("cache_creation").is_some();
+    if !anthropic_usage {
+        return (standard_input, output, total, standard_cached);
+    }
+
+    let uncached_input = u.get("input_tokens").and_then(Value::as_i64);
+    let cache_read = u.get("cache_read_input_tokens").and_then(Value::as_i64);
+    let cache_creation = u
+        .get("cache_creation_input_tokens")
+        .and_then(Value::as_i64)
+        .or_else(|| {
+            u.get("cache_creation")
+                .and_then(Value::as_object)
+                .map(|creation| {
+                    creation
+                        .iter()
+                        .filter(|(key, _)| key.ends_with("_input_tokens"))
+                        .filter_map(|(_, value)| value.as_i64())
+                        .sum()
+                })
+        });
+    let input = (uncached_input.is_some() || cache_creation.is_some() || cache_read.is_some())
+        .then(|| {
+            uncached_input.unwrap_or(0) + cache_creation.unwrap_or(0) + cache_read.unwrap_or(0)
+        });
+    (input, output, total, cache_read)
 }
 
 fn with_estimated_total(
