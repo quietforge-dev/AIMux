@@ -29,9 +29,21 @@
             <Github class="sidebar-action-icon" :size="16" :stroke-width="2" />
             <span>GitHub</span>
           </el-button>
-          <el-button text class="sidebar-action" @click="checkForUpdates">
-            <RefreshCw class="sidebar-action-icon" :size="16" :stroke-width="2" />
-            <span>检查更新</span>
+          <el-button
+            text
+            class="sidebar-action"
+            :loading="updateChecking"
+            :loading-icon="RefreshCw"
+            :disabled="updateChecking || updateInstalling"
+            @click="checkForUpdates"
+          >
+            <RefreshCw
+              v-if="!updateChecking"
+              class="sidebar-action-icon"
+              :size="16"
+              :stroke-width="2"
+            />
+            <span>{{ updateChecking ? '正在检查更新...' : '检查更新' }}</span>
           </el-button>
         </div>
         <div class="version">v{{ app.version }}</div>
@@ -70,6 +82,7 @@ const AUTO_UPDATE_INITIAL_DELAY_MS = 5_000;
 const AUTO_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1_000;
 const updater = useAppUpdater();
 const {
+  checking: updateChecking,
   installing: updateInstalling,
   notes: updateNotes,
   progressLabel: updateProgressLabel,
@@ -94,6 +107,14 @@ const openGithub = async () => {
 };
 
 const checkForUpdates = async () => {
+  if (updateChecking.value) {
+    ElMessage.info('正在检查更新，请稍候');
+    return;
+  }
+  if (updateInstalling.value) {
+    ElMessage.info('正在安装更新，请稍候');
+    return;
+  }
   try {
     const result = await updater.checkForUpdates();
     if (result && !result.available) {
