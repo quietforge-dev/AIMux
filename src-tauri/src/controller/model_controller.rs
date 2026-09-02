@@ -6,6 +6,7 @@ use crate::{
 };
 use axum::{
     extract::{Path, Query, State},
+    http::StatusCode,
     routing::{get, post, put},
     Json, Router,
 };
@@ -50,8 +51,12 @@ async fn update(
         serde_json::to_value(model_dao::to_view(model_dao::update(&s.pool, m, p).await?)).unwrap(),
     ))
 }
-async fn remove(State(s): State<Arc<AppState>>, Path(id): Path<String>) -> Result<(), AppError> {
-    model_dao::delete(&s.pool, &id).await
+async fn remove(
+    State(s): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    model_dao::delete(&s.pool, &id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 async fn default_model(
     State(s): State<Arc<AppState>>,

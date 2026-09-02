@@ -87,9 +87,14 @@ const setDefault = async (row: CatalogModel) => {
   await load();
 };
 const remove = async (row: CatalogModel) => {
-  await ElMessageBox.confirm(`确认删除 ${row.name}？`, '提示');
-  await modelsApi.remove(row.id);
-  await load();
+  try {
+    await ElMessageBox.confirm(`确认删除 ${row.name}？`, '提示');
+    await modelsApi.remove(row.id);
+    await load();
+    ElMessage.success('删除成功');
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(String(error));
+  }
 };
 onMounted(load);
 </script>
