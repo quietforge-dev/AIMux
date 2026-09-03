@@ -27,6 +27,9 @@ export type AccountTestResult = {
   response_body?: string;
   model?: string;
 };
+export type DiscoveredModels = {
+  models: string[];
+};
 export const accountsApi = {
   list: (params = '') => get<{ items: Account[]; total: number }>(`/api/accounts${params}`),
   create: (v: unknown) => post<Account>('/api/accounts', v),
@@ -37,4 +40,6 @@ export const accountsApi = {
     post<Account>(`/api/accounts/${id}/adjust-priority?priority=${priority}`),
   test: (id: string, model?: string, signal?: AbortSignal) =>
     post<AccountTestResult>(`/api/accounts/${id}/test`, { model }, { signal }),
+  discoverModels: (account: Pick<Account, 'type' | 'base_url' | 'api_key'>) =>
+    post<DiscoveredModels>('/api/accounts/discover-models', account),
 };

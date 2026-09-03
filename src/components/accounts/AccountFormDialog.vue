@@ -73,6 +73,16 @@
             <span class="model-count"
               >已选 {{ selectedModelCount }} / {{ availableModels.length }}</span
             >
+            <el-button
+              link
+              type="primary"
+              size="small"
+              :loading="discoveringModels"
+              @click="openModelDiscovery"
+            >
+              <el-icon><Connection /></el-icon>
+              从接口获取模型
+            </el-button>
           </div>
           <el-checkbox-group v-model="form.supported_models" class="model-checkbox-group">
             <el-checkbox v-for="model in availableModels" :key="model.id" :label="model.name">
@@ -184,13 +194,70 @@
       <el-button type="primary" @click="save">保存</el-button>
     </template>
   </el-dialog>
+
+  <el-dialog
+    v-model="modelDiscoveryDialog"
+    title="从接口获取模型"
+    width="720px"
+    top="10vh"
+    append-to-body
+    class="model-discovery-dialog"
+  >
+    <div class="model-discovery-toolbar">
+      <el-checkbox
+        :model-value="allDiscoveredSelected"
+        :indeterminate="someDiscoveredSelected"
+        :disabled="!discoveredModels.length"
+        @change="toggleAllDiscoveredModels"
+      >
+        全选接口结果
+      </el-checkbox>
+      <span class="model-count"
+        >接口返回 {{ discoveredModels.length }} 个，已选 {{ discoverySelection.length }} 个</span
+      >
+      <el-input
+        v-model="modelDiscoveryKeyword"
+        clearable
+        placeholder="筛选模型"
+        :prefix-icon="Search"
+        class="model-discovery-search"
+      />
+    </div>
+
+    <div class="model-discovery-list">
+      <el-checkbox-group v-if="filteredDiscoveredModels.length" v-model="discoverySelection">
+        <el-checkbox v-for="name in filteredDiscoveredModels" :key="name" :label="name">
+          {{ name }}
+        </el-checkbox>
+      </el-checkbox-group>
+      <el-empty
+        v-else
+        :description="discoveredModels.length ? '没有匹配的模型' : '接口未返回模型'"
+        :image-size="72"
+      />
+    </div>
+
+    <template v-if="unreturnedSelectedModels.length">
+      <div class="model-discovery-unreturned-title">当前已选但本次未返回</div>
+      <el-checkbox-group v-model="discoverySelection" class="model-discovery-unreturned">
+        <el-checkbox v-for="name in unreturnedSelectedModels" :key="name" :label="name">
+          {{ name }}
+        </el-checkbox>
+      </el-checkbox-group>
+    </template>
+
+    <template #footer>
+      <el-button @click="modelDiscoveryDialog = false">取消</el-button>
+      <el-button type="primary" @click="applyDiscoveredModels">确认回填</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue';
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus';
-import { Plus } from '@element-plus/icons-vue';
-import type { Account } from '../../api/accounts';
+import { Connection, Plus, Search } from '@element-plus/icons-vue';
+import { accountsApi, type Account } from '../../api/accounts';
 import type { CatalogModel } from '../../api/models';
 
 type AccountForm = {
@@ -229,6 +296,11 @@ const visible = defineModel<boolean>({ required: true });
 const formRef = ref<FormInstance>();
 const tagsText = ref('');
 const mappingRows = ref<MappingRow[]>([]);
+const discoveringModels = ref(false);
+const modelDiscoveryDialog = ref(false);
+const modelDiscoveryKeyword = ref('');
+const discoveredModels = ref<string[]>([]);
+const discoverySelection = ref<string[]>([]);
 
 const createForm = (): AccountForm => ({
   name: '',
@@ -275,9 +347,96 @@ const upstreamModelOptions = computed(() => {
   }
   return names;
 });
+const filteredDiscoveredModels = computed(() => {
+  const keyword = modelDiscoveryKeyword.value.trim().toLowerCase();
+  return keyword
+    ? discoveredModels.value.filter((name) => name.toLowerCase().includes(keyword))
+    : discoveredModels.value;
+});
+const unreturnedSelectedModels = computed(() => {
+  const discovered = new Set(discoveredModels.value);
+  return discoverySelection.value.filter((name) => !discovered.has(name));
+});
+const discoveredSelectedCount = computed(
+  () => discoverySelection.value.filter((name) => discoveredModels.value.includes(name)).length,
+);
+const allDiscoveredSelected = computed(
+  () =>
+    discoveredModels.value.length > 0 &&
+    discoveredSelectedCount.value === discoveredModels.value.length,
+);
+const someDiscoveredSelected = computed(
+  () => discoveredSelectedCount.value > 0 && !allDiscoveredSelected.value,
+);
 
 const toggleAllModels = (checked: boolean) => {
   form.supported_models = checked ? availableModels.value.map((model) => model.name) : [];
+};
+
+const openModelDiscovery = async () => {
+  if (!form.base_url.trim()) {
+    ElMessage.warning('请先填写上游地址');
+    return;
+  }
+  if (!form.api_key.trim()) {
+    ElMessage.warning('请先填写 API 密钥');
+    return;
+  }
+  discoveringModels.value = true;
+  try {
+    const result = await accountsApi.discoverModels({
+      type: form.type,
+      base_url: form.base_url.trim(),
+      api_key: form.api_key.trim(),
+    });
+    discoveredModels.value = result.models;
+    discoverySelection.value = [...form.supported_models];
+    modelDiscoveryKeyword.value = '';
+    modelDiscoveryDialog.value = true;
+  } catch (error) {
+    ElMessage.error(`获取模型失败：${String(error)}`);
+  } finally {
+    discoveringModels.value = false;
+  }
+};
+
+const toggleAllDiscoveredModels = (checked: boolean) => {
+  const selected = new Set(discoverySelection.value);
+  for (const name of discoveredModels.value) {
+    if (checked) selected.add(name);
+    else selected.delete(name);
+  }
+  discoverySelection.value = [...selected];
+};
+
+const applyDiscoveredModels = () => {
+  const selected = [...new Set(discoverySelection.value)];
+  if (!selected.length) {
+    ElMessage.warning('请至少选择一个支持模型');
+    return;
+  }
+  const defaultModelCleared =
+    Boolean(form.test_default_model) && !selected.includes(form.test_default_model);
+  const removedMappings = mappingRows.value.filter(
+    (row) => row.client_model && !selected.includes(row.client_model),
+  ).length;
+  form.supported_models = selected;
+  if (defaultModelCleared) form.test_default_model = '';
+  if (removedMappings) {
+    mappingRows.value = mappingRows.value.filter(
+      (row) => !row.client_model || selected.includes(row.client_model),
+    );
+  }
+  modelDiscoveryDialog.value = false;
+  if (defaultModelCleared || removedMappings) {
+    const changes = [
+      defaultModelCleared && '已清空测试模型',
+      removedMappings && `已移除 ${removedMappings} 条模型映射`,
+    ]
+      .filter(Boolean)
+      .join('；');
+    ElMessage.warning(changes);
+  }
 };
 
 const rules: FormRules = {
@@ -437,6 +596,10 @@ watch(
   height: 24px;
 }
 
+.model-picker-toolbar :deep(.el-button) {
+  margin-left: auto;
+}
+
 .model-checkbox-group {
   display: flex;
   flex-wrap: wrap;
@@ -463,5 +626,59 @@ watch(
 
 .mapping-add-btn {
   margin-top: 6px;
+}
+
+.model-discovery-toolbar {
+  display: grid;
+  grid-template-columns: auto 1fr 180px;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.model-discovery-toolbar .model-count {
+  white-space: nowrap;
+}
+
+.model-discovery-list {
+  min-height: 160px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+}
+
+.model-discovery-list :deep(.el-checkbox-group),
+.model-discovery-unreturned {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.model-discovery-list :deep(.el-checkbox),
+.model-discovery-unreturned :deep(.el-checkbox) {
+  width: calc(50% - 8px);
+  margin-right: 8px;
+  overflow: hidden;
+}
+
+.model-discovery-list :deep(.el-checkbox__label),
+.model-discovery-unreturned :deep(.el-checkbox__label) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-discovery-unreturned-title {
+  margin: 16px 0 8px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.model-discovery-unreturned {
+  max-height: 88px;
+  overflow-y: auto;
+  padding: 8px 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 4px;
 }
 </style>

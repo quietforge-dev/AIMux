@@ -2,8 +2,10 @@ use crate::{
     app_state::AppState,
     dao::account_dao,
     error::AppError,
-    schema::account_schema::{AccountCreate, AccountUpdate, TestRequest},
-    service::{account_probe_service, account_service},
+    schema::account_schema::{
+        AccountCreate, AccountUpdate, DiscoverModelsRequest, DiscoverModelsResponse, TestRequest,
+    },
+    service::{account_model_discovery_service, account_probe_service, account_service},
     upstream::error::response_body,
 };
 use axum::{
@@ -35,6 +37,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/api/accounts/{id}/toggle-status", post(toggle))
         .route("/api/accounts/{id}/adjust-priority", post(adjust))
         .route("/api/accounts/{id}/test", post(test))
+        .route("/api/accounts/discover-models", post(discover_models))
 }
 async fn list(
     State(s): State<Arc<AppState>>,
@@ -90,6 +93,20 @@ async fn remove(
 ) -> Result<StatusCode, AppError> {
     account_dao::delete(&s.pool, &id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+async fn discover_models(
+    State(s): State<Arc<AppState>>,
+    Json(p): Json<DiscoverModelsRequest>,
+) -> Result<Json<DiscoverModelsResponse>, AppError> {
+    let settings = s.settings.read().await.clone();
+    let models = account_model_discovery_service::discover(
+        &p.account_type,
+        &p.base_url,
+        &p.api_key,
+        &settings,
+    )
+    .await?;
+    Ok(Json(DiscoverModelsResponse { models }))
 }
 async fn toggle(
     State(s): State<Arc<AppState>>,

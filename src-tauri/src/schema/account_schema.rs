@@ -78,6 +78,19 @@ pub struct TestRequest {
     pub model: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DiscoverModelsRequest {
+    #[serde(rename = "type")]
+    pub account_type: String,
+    pub base_url: String,
+    pub api_key: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DiscoverModelsResponse {
+    pub models: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct TestResult {
     pub account_id: String,
