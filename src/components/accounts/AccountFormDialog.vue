@@ -206,7 +206,21 @@ const createForm = (): AccountForm => ({
 
 const form = reactive<AccountForm>(createForm());
 const editing = computed(() => Boolean(props.account?.id));
-const availableModels = computed(() => props.models.filter((model) => model.type === form.type));
+const availableModels = computed(() => {
+  const models = props.models.filter((model) => model.type === form.type);
+  const known = new Set(models.map((model) => model.name));
+  for (const name of form.supported_models) {
+    if (!known.has(name)) {
+      models.push({
+        id: `imported-${form.type}-${name}`,
+        name,
+        type: form.type,
+        is_default: 0,
+      });
+    }
+  }
+  return models;
+});
 const selectedModelCount = computed(
   () => availableModels.value.filter((model) => form.supported_models.includes(model.name)).length,
 );
