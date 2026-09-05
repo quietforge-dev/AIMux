@@ -1,10 +1,11 @@
 use crate::{dao::model_dao, error::AppError, schema::model_schema::ModelView};
 use sqlx::SqlitePool;
 
-const DEFAULTS: [(&str, &str); 6] = [
+const DEFAULTS: [(&str, &str); 7] = [
     ("openai", "gpt-5.6-sol"),
     ("openai", "gpt-5.6-terra"),
     ("openai", concat!("gpt-5.6-", "luna")),
+    ("openai", "gpt-6-astra"),
     ("anthropic", "claude-opus-5"),
     ("anthropic", "claude-sonnet-5"),
     ("anthropic", "claude-fable-5-1"),
