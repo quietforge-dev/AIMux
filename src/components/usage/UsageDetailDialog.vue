@@ -16,6 +16,7 @@
         <el-descriptions-item label="首 Token 用时">{{
           formatMsRaw(record.first_token_ms)
         }}</el-descriptions-item>
+        <el-descriptions-item label="吞吐量">{{ formatThroughput(record) }}</el-descriptions-item>
         <el-descriptions-item label="重试次数">{{
           displayRetryCount(record.attempts)
         }}</el-descriptions-item>
@@ -60,7 +61,7 @@
 
 <script setup lang="ts">
 import type { UsageRecord } from '../../api/usage';
-import { formatToken } from '../../utils/token';
+import { formatThroughput, formatToken } from '../../utils/token';
 
 const visible = defineModel<boolean>({ required: true });
 defineProps<{ record?: UsageRecord }>();

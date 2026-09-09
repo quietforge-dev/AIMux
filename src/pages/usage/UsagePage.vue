@@ -30,15 +30,15 @@
     </div>
 
     <el-table :data="items" v-loading="loading" border stripe class="compact-table">
-      <el-table-column label="时间" min-width="160">
+      <el-table-column label="时间" min-width="110">
         <template #default="{ row }">{{ formatTime(row.started_at) }}</template>
       </el-table-column>
       <el-table-column prop="account_name" label="账号" min-width="120" />
       <el-table-column prop="account_type" label="类型" width="90" />
       <el-table-column prop="model" label="模型" min-width="130" />
-      <el-table-column prop="reasoning_effort" label="推理强度" width="80" />
-      <el-table-column prop="endpoint" label="接口" min-width="150" />
-      <el-table-column label="结果" width="90">
+      <el-table-column prop="reasoning_effort" label="推理强度" width="90" />
+      <el-table-column prop="endpoint" label="接口" min-width="140" />
+      <el-table-column label="结果" width="80">
         <template #default="{ row }">
           <el-tooltip
             v-if="isFailure(row)"
@@ -52,7 +52,7 @@
           <span v-else :class="resultClass(row)">{{ resultText(row) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="延迟" width="125">
+      <el-table-column label="延迟" width="110">
         <template #default="{ row }">
           <div class="latency-cell">
             <div :class="(row.first_token_ms ?? 0) > 10_000 ? 'warning-text' : ''">
@@ -64,7 +64,10 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="重试次数" width="80">
+      <el-table-column label="吞吐量" width="120">
+        <template #default="{ row }">{{ formatThroughput(row) }}</template>
+      </el-table-column>
+      <el-table-column label="重试次数" width="90">
         <template #default="{ row }">{{ displayRetryCount(row.attempts) }}</template>
       </el-table-column>
       <el-table-column label="Token用量" min-width="180">
@@ -110,7 +113,7 @@ import { usageApi, type UsageFilterState, type UsageRecord } from '../../api/usa
 import UsageCleanupDialog from '../../components/usage/UsageCleanupDialog.vue';
 import UsageDetailDialog from '../../components/usage/UsageDetailDialog.vue';
 import UsageFilter from '../../components/usage/UsageFilter.vue';
-import { formatToken } from '../../utils/token';
+import { formatThroughput, formatToken } from '../../utils/token';
 
 const PAGE_SIZE = 10;
 const items = ref<UsageRecord[]>([]);
