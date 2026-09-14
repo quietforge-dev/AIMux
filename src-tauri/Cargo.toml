@@ -1,6 +1,6 @@
 [package]
 name = "aimux"
-version = "0.2.33"
+version = "0.2.34"
 description = "AIMux gateway and Tauri desktop application"
 authors = ["quietforge-dev"]
 edition = "2021"
