@@ -233,9 +233,9 @@ const parseTransfer = (raw: string): AccountTransfer => {
     typeof value.multiplier !== 'number' ||
     !Number.isFinite(value.multiplier) ||
     value.multiplier < 0.01 ||
-    value.multiplier > 0.3
+    value.multiplier > 0.99
   ) {
-    throw new Error('倍率必须在 0.01 到 0.30 之间');
+    throw new Error('倍率必须在 0.01 到 0.99 之间');
   }
   const supportedModels = strings(value.supported_models, 'supported_models');
   if (!supportedModels.length) throw new Error('supported_models 不能为空');

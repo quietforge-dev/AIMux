@@ -41,6 +41,18 @@ async fn creates_account_with_current_columns() {
 }
 
 #[tokio::test]
+async fn allows_multiplier_up_to_point_ninety_nine() {
+    let path = std::env::temp_dir().join(format!("aimux-account-{}.sqlite3", uuid::Uuid::new_v4()));
+    let pool = connect(&path).await.expect("创建数据库失败");
+    let mut payload = input("high-multiplier", "https://example.test".into());
+    payload.multiplier = 0.99;
+    let account = create(&pool, payload).await.expect("创建高倍率账号失败");
+    assert_eq!(account.multiplier, 0.99);
+    pool.close().await;
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn sorts_same_multiplier_by_monitor_average_duration_with_unknown_last() {
     let path = std::env::temp_dir().join(format!("aimux-account-{}.sqlite3", uuid::Uuid::new_v4()));
     let pool = connect(&path).await.expect("创建数据库失败");
