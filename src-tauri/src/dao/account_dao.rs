@@ -299,7 +299,7 @@ fn validate(name: &str, typ: &str, url: &str, key: &str, p: i64, m: f64) -> Resu
     if !["openai", "anthropic"].contains(&typ) {
         return Err(AppError::BadRequest("协议类型不支持".into()));
     }
-    if !(0..=9).contains(&p) || !(0.01..=0.30).contains(&m) {
+    if !(0..=9).contains(&p) || !(0.01..=0.99).contains(&m) {
         return Err(AppError::BadRequest("优先级或倍率超出范围".into()));
     }
     Ok(())

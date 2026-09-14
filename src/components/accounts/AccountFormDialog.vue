@@ -50,7 +50,7 @@
             <el-input-number
               v-model="form.multiplier"
               :min="0.01"
-              :max="0.3"
+              :max="0.99"
               :step="0.01"
               :precision="2"
               style="width: 100%"
