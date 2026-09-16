@@ -17,4 +17,8 @@ pub struct SettingsPayload {
 #[derive(Debug, Deserialize)]
 pub struct MonitoringSettingsUpdate {
     pub monitoring_enabled: bool,
+    #[serde(default)]
+    pub monitoring_start_time: Option<String>,
+    #[serde(default)]
+    pub monitoring_end_time: Option<String>,
 }

@@ -8,12 +8,19 @@ export type Settings = {
   upstream_proxy_enabled: boolean;
   upstream_proxy_url: string;
   monitoring_enabled: boolean;
+  monitoring_start_time: string | null;
+  monitoring_end_time: string | null;
   local_token: string;
   launch_at_login: boolean;
+};
+export type MonitoringSettings = {
+  monitoring_enabled: boolean;
+  monitoring_start_time: string | null;
+  monitoring_end_time: string | null;
 };
 export const settingsApi = {
   get: () => get<Settings>('/api/settings'),
   update: (v: Settings) => put<Settings>('/api/settings', v),
-  updateMonitoring: (monitoring_enabled: boolean) =>
-    put<{ monitoring_enabled: boolean }>('/api/settings/monitoring', { monitoring_enabled }),
+  updateMonitoring: (v: MonitoringSettings) =>
+    put<MonitoringSettings>('/api/settings/monitoring', v),
 };

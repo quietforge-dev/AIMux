@@ -19,5 +19,11 @@ export type MonitorItem = {
   model?: string;
 };
 export const monitorApi = {
-  list: () => get<{ items: MonitorItem[]; monitoring_enabled: boolean }>('/api/monitor/records'),
+  list: () =>
+    get<{
+      items: MonitorItem[];
+      monitoring_enabled: boolean;
+      monitoring_start_time: string | null;
+      monitoring_end_time: string | null;
+    }>('/api/monitor/records'),
 };

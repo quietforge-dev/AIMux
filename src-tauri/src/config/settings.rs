@@ -14,6 +14,10 @@ pub struct Settings {
     pub upstream_proxy_enabled: bool,
     pub upstream_proxy_url: String,
     pub monitoring_enabled: bool,
+    #[serde(default)]
+    pub monitoring_start_time: Option<String>,
+    #[serde(default)]
+    pub monitoring_end_time: Option<String>,
     pub local_token: String,
     pub launch_at_login: bool,
 }
@@ -29,6 +33,8 @@ impl Default for Settings {
             upstream_proxy_enabled: false,
             upstream_proxy_url: "http://127.0.0.1:7890".into(),
             monitoring_enabled: true,
+            monitoring_start_time: None,
+            monitoring_end_time: None,
             local_token: String::new(),
             launch_at_login: false,
         }

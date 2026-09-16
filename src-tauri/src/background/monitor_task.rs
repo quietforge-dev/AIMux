@@ -25,7 +25,14 @@ pub async fn run(state: Arc<AppState>) {
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     loop {
         ticker.tick().await;
-        if !state.settings.read().await.monitoring_enabled {
+        let settings = state.settings.read().await.clone();
+        if !settings.monitoring_enabled
+            || !crate::utils::time::in_monitoring_window(
+                settings.monitoring_start_time.as_deref(),
+                settings.monitoring_end_time.as_deref(),
+                chrono::Local::now().time(),
+            )
+        {
             continue;
         }
         if let Err(error) = round(&state).await {

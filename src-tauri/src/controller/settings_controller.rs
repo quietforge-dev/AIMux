@@ -25,9 +25,17 @@ async fn update_monitoring(
     State(s): State<Arc<AppState>>,
     Json(value): Json<MonitoringSettingsUpdate>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let monitoring_enabled =
-        settings_service::update_monitoring(&s.settings, value.monitoring_enabled).await?;
-    Ok(Json(
-        serde_json::json!({ "monitoring_enabled": monitoring_enabled }),
-    ))
+    let (monitoring_enabled, monitoring_start_time, monitoring_end_time) =
+        settings_service::update_monitoring(
+            &s.settings,
+            value.monitoring_enabled,
+            value.monitoring_start_time,
+            value.monitoring_end_time,
+        )
+        .await?;
+    Ok(Json(serde_json::json!({
+        "monitoring_enabled": monitoring_enabled,
+        "monitoring_start_time": monitoring_start_time,
+        "monitoring_end_time": monitoring_end_time
+    })))
 }

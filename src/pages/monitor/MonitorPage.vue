@@ -9,6 +9,18 @@
           :loading="savingEnabled"
           :before-change="changeEnabled"
         />
+        <span class="range-label">监控时段</span>
+        <el-time-picker
+          v-model="timeRange"
+          is-range
+          format="HH:mm"
+          range-separator="至"
+          start-placeholder="开始时间"
+          end-placeholder="结束时间"
+          :disabled="savingRange"
+          @change="changeRange"
+        />
+        <span v-if="enabled && !inWindow" class="window-hint">当前不在监控时段</span>
         <el-button :loading="loading" @click="load">刷新</el-button>
       </div>
     </div>
@@ -66,7 +78,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { monitorApi, type MonitorItem, type MonitorRecord } from '../../api/monitor';
 import { settingsApi } from '../../api/settings';
 import { ElMessage } from 'element-plus';
@@ -77,6 +89,8 @@ const items = ref<MonitorItem[]>([]);
 const loading = ref(false);
 const enabled = ref(false);
 const savingEnabled = ref(false);
+const timeRange = ref<[Date, Date] | null>(null);
+const savingRange = ref(false);
 let timer: number | undefined;
 
 const load = async () => {
@@ -86,16 +100,58 @@ const load = async () => {
     const result = await monitorApi.list();
     items.value = result.items;
     enabled.value = result.monitoring_enabled;
+    timeRange.value = toRange(result.monitoring_start_time, result.monitoring_end_time);
   } finally {
     loading.value = false;
   }
 };
 
+const toTime = (value?: string | null) => {
+  if (!value) return null;
+  const [hours, minutes] = value.split(':').map(Number);
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+  const date = new Date();
+  date.setHours(hours, minutes, 0, 0);
+  return date;
+};
+
+const toRange = (start?: string | null, end?: string | null): [Date, Date] | null => {
+  const startDate = toTime(start);
+  const endDate = toTime(end);
+  return startDate && endDate ? [startDate, endDate] : null;
+};
+
+const formatHHmm = (value: Date) =>
+  `${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}`;
+
+const currentWindow = () => {
+  if (!timeRange.value) {
+    return { monitoring_start_time: null, monitoring_end_time: null };
+  }
+  return {
+    monitoring_start_time: formatHHmm(timeRange.value[0]),
+    monitoring_end_time: formatHHmm(timeRange.value[1]),
+  };
+};
+
+const inWindow = computed(() => {
+  if (!timeRange.value) return true;
+  const now = new Date();
+  const minutes = now.getHours() * 60 + now.getMinutes();
+  const toMinutes = (value: Date) => value.getHours() * 60 + value.getMinutes();
+  const start = toMinutes(timeRange.value[0]);
+  const end = toMinutes(timeRange.value[1]);
+  return start < end ? minutes >= start && minutes <= end : minutes >= start || minutes <= end;
+});
+
 const changeEnabled = async () => {
   const next = !enabled.value;
   savingEnabled.value = true;
   try {
-    await settingsApi.updateMonitoring(next);
+    await settingsApi.updateMonitoring({
+      monitoring_enabled: next,
+      ...currentWindow(),
+    });
     ElMessage.success(next ? '账号监控已开启' : '账号监控已关闭');
     return true;
   } catch (error) {
@@ -103,6 +159,22 @@ const changeEnabled = async () => {
     return false;
   } finally {
     savingEnabled.value = false;
+  }
+};
+
+const changeRange = async () => {
+  savingRange.value = true;
+  try {
+    await settingsApi.updateMonitoring({
+      monitoring_enabled: enabled.value,
+      ...currentWindow(),
+    });
+    ElMessage.success('监控时间范围已保存');
+  } catch (error) {
+    ElMessage.error(`更新监控时间范围失败：${String(error)}`);
+    await load();
+  } finally {
+    savingRange.value = false;
   }
 };
 
@@ -152,6 +224,16 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.range-label {
+  color: #606266;
+  font-size: 14px;
+}
+
+.window-hint {
+  color: #e0a800;
+  font-size: 12px;
 }
 
 .checks {
