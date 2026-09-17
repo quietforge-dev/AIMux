@@ -34,6 +34,11 @@
 
     <el-table :data="store.items" v-loading="store.loading" class="compact-table" border stripe>
       <el-table-column prop="name" label="名称" min-width="170" />
+      <el-table-column label="密钥" min-width="150">
+        <template #default="{ row }">
+          <span class="masked-api-key">{{ maskApiKey(row.api_key) }}</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="multiplier" label="倍率" width="90">
         <template #default="{ row }">
           <span>{{ Number(row.multiplier).toFixed(2) }}</span>
@@ -359,6 +364,12 @@ const test = async (row: Account) => {
 const formatDuration = (duration?: number | null) =>
   duration == null ? '-' : `${(duration / 1000).toFixed(2)} 秒`;
 
+const maskApiKey = (key: string) => {
+  if (!key) return '-';
+  if (key.length <= 8) return '****';
+  return `${key.slice(0, 4)}****${key.slice(-4)}`;
+};
+
 onMounted(load);
 </script>
 
@@ -380,5 +391,9 @@ onMounted(load);
 
 .account-status-tabs {
   margin-bottom: 12px;
+}
+
+.masked-api-key {
+  font-family: monospace;
 }
 </style>
