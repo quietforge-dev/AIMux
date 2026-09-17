@@ -52,7 +52,7 @@
           </el-button>
         </template>
       </el-table-column>
-      <el-table-column prop="priority" label="优先级" width="130">
+      <el-table-column prop="priority" label="优先级" width="160">
         <template #default="{ row }">
           <el-input-number
             v-model="row.priority"
