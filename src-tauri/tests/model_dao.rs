@@ -1,7 +1,7 @@
 use aimux_lib::{
-    dao::model_dao::{create, get, set_default},
+    dao::model_dao::{create, get, list, set_default, update},
     database::connect,
-    schema::model_schema::ModelCreate,
+    schema::model_schema::{ModelCreate, ModelUpdate},
 };
 
 #[tokio::test]
@@ -16,6 +16,7 @@ async fn switches_the_only_default_model_in_a_transaction() {
         ModelCreate {
             name: "model-a".into(),
             model_type: "openai".into(),
+            provider: "openai".into(),
         },
     )
     .await
@@ -25,6 +26,7 @@ async fn switches_the_only_default_model_in_a_transaction() {
         ModelCreate {
             name: "model-b".into(),
             model_type: "openai".into(),
+            provider: "deepseek".into(),
         },
     )
     .await
@@ -54,6 +56,67 @@ async fn switches_the_only_default_model_in_a_transaction() {
             .is_default,
         1
     );
+    pool.close().await;
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn filters_and_updates_model_provider_without_changing_default_grouping() {
+    let path = std::env::temp_dir().join(format!(
+        "aimux-model-provider-{}.sqlite3",
+        uuid::Uuid::new_v4()
+    ));
+    let pool = connect(&path).await.expect("创建数据库失败");
+    let openai = create(
+        &pool,
+        ModelCreate {
+            name: "provider-openai".into(),
+            model_type: "openai".into(),
+            provider: "openai".into(),
+        },
+    )
+    .await
+    .expect("创建 OpenAI 模型失败");
+    let deepseek = create(
+        &pool,
+        ModelCreate {
+            name: "provider-deepseek".into(),
+            model_type: "openai".into(),
+            provider: "deepseek".into(),
+        },
+    )
+    .await
+    .expect("创建 DeepSeek 模型失败");
+    set_default(&pool, openai.clone())
+        .await
+        .expect("设置默认模型失败");
+
+    let filtered = list(&pool, Some("openai"), Some("deepseek"))
+        .await
+        .expect("按供应商筛选失败");
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].id, deepseek.id);
+
+    let updated = update(
+        &pool,
+        deepseek,
+        ModelUpdate {
+            provider: Some("custom-relay".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("更新非预置供应商失败");
+    assert_eq!(updated.provider, "custom-relay");
+    assert_eq!(
+        get(&pool, &openai.id)
+            .await
+            .expect("读取默认模型失败")
+            .expect("默认模型不存在")
+            .is_default,
+        1
+    );
+
     pool.close().await;
     let _ = std::fs::remove_file(path);
 }

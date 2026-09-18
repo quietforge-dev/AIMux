@@ -284,6 +284,8 @@ type AccountPayload = AccountForm & {
   model_mappings: Record<string, string>;
 };
 
+type AccountModelOption = Pick<CatalogModel, 'id' | 'name' | 'type' | 'is_default'>;
+
 const props = defineProps<{
   account?: Account;
   models: CatalogModel[];
@@ -318,7 +320,7 @@ const createForm = (): AccountForm => ({
 const form = reactive<AccountForm>(createForm());
 const editing = computed(() => Boolean(props.account?.id));
 const availableModels = computed(() => {
-  const models = props.models.filter((model) => model.type === form.type);
+  const models: AccountModelOption[] = props.models.filter((model) => model.type === form.type);
   const known = new Set(models.map((model) => model.name));
   for (const name of form.supported_models) {
     if (!known.has(name)) {

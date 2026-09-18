@@ -8,18 +8,30 @@ use crate::{
     utils::time::utc_now_string,
 };
 
-pub async fn list(pool: &SqlitePool, kind: Option<&str>) -> Result<Vec<CatalogModel>, AppError> {
-    let mut q = String::from("SELECT * FROM models");
+pub async fn list(
+    pool: &SqlitePool,
+    kind: Option<&str>,
+    provider: Option<&str>,
+) -> Result<Vec<CatalogModel>, AppError> {
+    let mut sql = String::from("SELECT * FROM models WHERE 1=1");
     if kind.is_some() {
-        q.push_str(" WHERE type=?");
+        sql.push_str(" AND type=?");
     }
-    q.push_str(" ORDER BY type, is_default DESC, lower(name), id");
-    let mut query = sqlx::query_as::<_, CatalogModel>(&q);
-    if let Some(k) = kind {
-        query = query.bind(k);
+    if provider.is_some() {
+        sql.push_str(" AND provider=?");
+    }
+    sql.push_str(" ORDER BY type, is_default DESC, provider, lower(name), id");
+
+    let mut query = sqlx::query_as::<_, CatalogModel>(&sql);
+    if let Some(value) = kind {
+        query = query.bind(value);
+    }
+    if let Some(value) = provider {
+        query = query.bind(value);
     }
     Ok(query.fetch_all(pool).await?)
 }
+
 pub async fn get(pool: &SqlitePool, id: &str) -> Result<Option<CatalogModel>, AppError> {
     Ok(
         sqlx::query_as::<_, CatalogModel>("SELECT * FROM models WHERE id=?")
@@ -28,6 +40,7 @@ pub async fn get(pool: &SqlitePool, id: &str) -> Result<Option<CatalogModel>, Ap
             .await?,
     )
 }
+
 pub async fn default_name(pool: &SqlitePool, kind: &str) -> Result<Option<String>, AppError> {
     Ok(
         sqlx::query_scalar("SELECT name FROM models WHERE type=? AND is_default=1 LIMIT 1")
@@ -36,13 +49,18 @@ pub async fn default_name(pool: &SqlitePool, kind: &str) -> Result<Option<String
             .await?,
     )
 }
-pub async fn insert_missing(pool: &SqlitePool, defaults: &[(&str, &str)]) -> Result<(), AppError> {
+
+pub async fn insert_missing(
+    pool: &SqlitePool,
+    defaults: &[(&str, &str, &str)],
+) -> Result<(), AppError> {
     let now = utc_now_string();
-    for (kind, name) in defaults {
-        sqlx::query("INSERT OR IGNORE INTO models(id,name,type,is_default,created_at,updated_at) VALUES(?,?,?,0,?,?)")
+    for (kind, provider, name) in defaults {
+        sqlx::query("INSERT OR IGNORE INTO models(id,name,type,provider,is_default,created_at,updated_at) VALUES(?,?,?,?,0,?,?)")
             .bind(Uuid::new_v4().to_string())
             .bind(name)
             .bind(kind)
+            .bind(provider)
             .bind(&now)
             .bind(&now)
             .execute(pool)
@@ -50,69 +68,86 @@ pub async fn insert_missing(pool: &SqlitePool, defaults: &[(&str, &str)]) -> Res
     }
     Ok(())
 }
-pub async fn create(pool: &SqlitePool, p: ModelCreate) -> Result<CatalogModel, AppError> {
-    if !["openai", "anthropic"].contains(&p.model_type.as_str()) {
-        return Err(AppError::BadRequest("协议类型不支持".into()));
-    }
+
+pub async fn create(pool: &SqlitePool, payload: ModelCreate) -> Result<CatalogModel, AppError> {
+    let name = payload.name.trim().to_owned();
+    let kind = payload.model_type.trim().to_owned();
+    let provider = payload.provider.trim().to_owned();
+    validate(&name, &kind, &provider)?;
     if sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM models WHERE type=? AND name=?")
-        .bind(&p.model_type)
-        .bind(p.name.trim())
+        .bind(&kind)
+        .bind(&name)
         .fetch_one(pool)
         .await?
         > 0
     {
         return Err(AppError::BadRequest("该类型下的模型名称已存在".into()));
     }
+
     let id = Uuid::new_v4().to_string();
     let now = utc_now_string();
-    sqlx::query(
-        "INSERT INTO models(id,name,type,is_default,created_at,updated_at) VALUES(?,?,?,0,?,?)",
-    )
-    .bind(&id)
-    .bind(p.name.trim())
-    .bind(p.model_type)
-    .bind(&now)
-    .bind(&now)
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT INTO models(id,name,type,provider,is_default,created_at,updated_at) VALUES(?,?,?,?,0,?,?)")
+        .bind(&id)
+        .bind(name)
+        .bind(kind)
+        .bind(provider)
+        .bind(&now)
+        .bind(&now)
+        .execute(pool)
+        .await?;
     get(pool, &id)
         .await?
         .ok_or_else(|| AppError::Internal("创建模型后读取失败".into()))
 }
+
 pub async fn update(
     pool: &SqlitePool,
     current: CatalogModel,
-    p: ModelUpdate,
+    payload: ModelUpdate,
 ) -> Result<CatalogModel, AppError> {
-    let name = p.name.unwrap_or(current.name.clone());
-    let kind = p.model_type.unwrap_or(current.r#type.clone());
+    let current_id = current.id.clone();
+    let name = payload.name.unwrap_or(current.name).trim().to_owned();
+    let kind = payload
+        .model_type
+        .unwrap_or(current.r#type.clone())
+        .trim()
+        .to_owned();
+    let provider = payload
+        .provider
+        .unwrap_or(current.provider)
+        .trim()
+        .to_owned();
+    validate(&name, &kind, &provider)?;
     if sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM models WHERE type=? AND name=? AND id<>?")
         .bind(&kind)
         .bind(&name)
-        .bind(&current.id)
+        .bind(&current_id)
         .fetch_one(pool)
         .await?
         > 0
     {
         return Err(AppError::BadRequest("该类型下的模型名称已存在".into()));
     }
+
     let is_default = if kind != current.r#type {
         0
     } else {
         current.is_default
     };
-    sqlx::query("UPDATE models SET name=?,type=?,is_default=?,updated_at=? WHERE id=?")
+    sqlx::query("UPDATE models SET name=?,type=?,provider=?,is_default=?,updated_at=? WHERE id=?")
         .bind(name)
         .bind(kind)
+        .bind(provider)
         .bind(is_default)
         .bind(utc_now_string())
-        .bind(&current.id)
+        .bind(&current_id)
         .execute(pool)
         .await?;
-    get(pool, &current.id)
+    get(pool, &current_id)
         .await?
         .ok_or_else(|| AppError::Internal("更新模型后读取失败".into()))
 }
+
 pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), AppError> {
     sqlx::query("DELETE FROM models WHERE id=?")
         .bind(id)
@@ -120,6 +155,7 @@ pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), AppError> {
         .await?;
     ensure_defaults(pool).await
 }
+
 pub async fn set_default(
     pool: &SqlitePool,
     current: CatalogModel,
@@ -140,6 +176,7 @@ pub async fn set_default(
         .await?
         .ok_or_else(|| AppError::Internal("设置默认模型后读取失败".into()))
 }
+
 pub async fn ensure_defaults(pool: &SqlitePool) -> Result<(), AppError> {
     for kind in ["openai", "anthropic"] {
         let exists = sqlx::query_scalar::<_, i64>(
@@ -166,13 +203,28 @@ pub async fn ensure_defaults(pool: &SqlitePool) -> Result<(), AppError> {
     }
     Ok(())
 }
-pub fn to_view(m: CatalogModel) -> ModelView {
+
+pub fn to_view(model: CatalogModel) -> ModelView {
     ModelView {
-        id: m.id,
-        name: m.name,
-        model_type: m.r#type,
-        is_default: m.is_default,
-        created_at: m.created_at,
-        updated_at: m.updated_at,
+        id: model.id,
+        name: model.name,
+        model_type: model.r#type,
+        provider: model.provider,
+        is_default: model.is_default,
+        created_at: model.created_at,
+        updated_at: model.updated_at,
     }
+}
+
+fn validate(name: &str, kind: &str, provider: &str) -> Result<(), AppError> {
+    if name.is_empty() {
+        return Err(AppError::BadRequest("模型名称不能为空".into()));
+    }
+    if !["openai", "anthropic"].contains(&kind) {
+        return Err(AppError::BadRequest("协议类型不支持".into()));
+    }
+    if provider.is_empty() {
+        return Err(AppError::BadRequest("模型供应商不能为空".into()));
+    }
+    Ok(())
 }

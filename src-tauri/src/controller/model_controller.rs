@@ -16,6 +16,7 @@ use std::sync::Arc;
 struct Q {
     #[serde(rename = "type")]
     kind: Option<String>,
+    provider: Option<String>,
 }
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
@@ -28,7 +29,7 @@ async fn list(
     Query(q): Query<Q>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     Ok(Json(
-        serde_json::json!({"items":model_dao::list(&s.pool,q.kind.as_deref()).await?.into_iter().map(model_dao::to_view).collect::<Vec<_>>()}),
+        serde_json::json!({"items":model_dao::list(&s.pool,q.kind.as_deref(),q.provider.as_deref()).await?.into_iter().map(model_dao::to_view).collect::<Vec<_>>()}),
     ))
 }
 async fn create(

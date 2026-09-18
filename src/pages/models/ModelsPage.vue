@@ -2,90 +2,207 @@
   <div class="page">
     <div class="page-toolbar">
       <h2 class="page-title">模型维护</h2>
-      <div>
+      <div class="model-actions">
         <el-select
-          v-model="kind"
+          v-model="typeFilter"
           clearable
-          placeholder="类型筛选"
+          placeholder="协议类型"
+          class="type-filter"
           @change="load"
-          style="width: 150px; margin-right: 10px"
-          ><el-option label="OpenAI" value="openai" /><el-option
-            label="Anthropic"
-            value="anthropic" /></el-select
-        ><el-button :loading="loading" @click="load">刷新</el-button
-        ><el-button type="primary" @click="open()">新增模型</el-button>
+        >
+          <el-option label="OpenAI" value="openai" />
+          <el-option label="Anthropic" value="anthropic" />
+        </el-select>
+        <el-select
+          v-model="providerFilter"
+          clearable
+          filterable
+          placeholder="供应商"
+          class="provider-filter"
+          @change="load"
+        >
+          <template #label="{ value }">
+            <ProviderLabel v-if="providerMeta(String(value))" :provider="String(value)" />
+          </template>
+          <el-option
+            v-for="provider in PROVIDERS"
+            :key="provider.value"
+            :label="provider.label"
+            :value="provider.value"
+          >
+            <ProviderLabel :provider="provider.value" />
+          </el-option>
+        </el-select>
+        <el-button :loading="loading" @click="load">刷新</el-button>
+        <el-button type="primary" @click="open()">新增模型</el-button>
       </div>
     </div>
-    <el-table :data="items" v-loading="loading" border class="compact-table"
-      ><el-table-column prop="name" label="模型名称" min-width="260" /><el-table-column
-        prop="type"
-        label="类型"
-        width="140"
-      /><el-table-column label="测试默认" width="130"
-        ><template #default="{ row }"
-          ><el-tag v-if="row.is_default" type="success">默认</el-tag
-          ><el-button v-else link type="primary" @click="setDefault(row)"
-            >设为默认</el-button
-          ></template
-        ></el-table-column
-      ><el-table-column label="操作" width="150"
-        ><template #default="{ row }"
-          ><el-button link type="primary" @click="open(row)">编辑</el-button
-          ><el-button link type="danger" @click="remove(row)">删除</el-button></template
-        ></el-table-column
-      ></el-table
-    ><el-dialog v-model="dialog" :title="editing ? '编辑模型' : '新增模型'" width="430px"
-      ><el-form :model="form" label-width="90px"
-        ><el-form-item label="名称"><el-input v-model="form.name" /></el-form-item
-        ><el-form-item label="类型"
-          ><el-select v-model="form.type"
-            ><el-option label="OpenAI" value="openai" /><el-option
-              label="Anthropic"
-              value="anthropic" /></el-select></el-form-item></el-form
-      ><template #footer
-        ><el-button @click="dialog = false">取消</el-button
-        ><el-button type="primary" @click="save">保存</el-button></template
-      ></el-dialog
-    >
+
+    <el-table :data="items" v-loading="loading" border class="compact-table">
+      <el-table-column prop="name" label="模型名称" min-width="260" />
+      <el-table-column prop="provider" label="供应商" width="180">
+        <template #default="{ row }">
+          <ProviderLabel :provider="row.provider" />
+        </template>
+      </el-table-column>
+      <el-table-column prop="type" label="协议类型" width="140" />
+      <el-table-column label="测试默认" width="130">
+        <template #default="{ row }">
+          <el-tag v-if="row.is_default" type="success">默认</el-tag>
+          <el-button v-else link type="primary" @click="setDefault(row)">设为默认</el-button>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="150">
+        <template #default="{ row }">
+          <el-button link type="primary" @click="open(row)">编辑</el-button>
+          <el-button link type="danger" @click="remove(row)">删除</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+
+    <el-dialog v-model="dialog" :title="editing ? '编辑模型' : '新增模型'" width="460px">
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
+        <el-form-item label="名称" prop="name">
+          <el-input v-model="form.name" placeholder="请输入模型名称" />
+        </el-form-item>
+        <el-form-item label="协议类型" prop="type">
+          <el-select v-model="form.type" style="width: 100%" @change="changeType">
+            <el-option label="OpenAI" value="openai" />
+            <el-option label="Anthropic" value="anthropic" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="供应商" prop="provider">
+          <el-select
+            v-model="form.provider"
+            filterable
+            style="width: 100%"
+            @change="providerTouched = true"
+          >
+            <template #label="{ value }">
+              <ProviderLabel v-if="providerMeta(String(value))" :provider="String(value)" />
+            </template>
+            <el-option
+              v-for="provider in PROVIDERS"
+              :key="provider.value"
+              :label="provider.label"
+              :value="provider.value"
+            >
+              <ProviderLabel :provider="provider.value" />
+            </el-option>
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dialog = false">取消</el-button>
+        <el-button type="primary" @click="save">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
+
 <script setup lang="ts">
-import { onMounted, ref, reactive } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
-import { modelsApi, type CatalogModel } from '../../api/models';
-const items = ref<CatalogModel[]>([]),
-  loading = ref(false),
-  kind = ref(''),
-  dialog = ref(false),
-  editing = ref(false),
-  form = reactive<any>({ name: '', type: 'openai' });
+import { computed, defineComponent, h, nextTick, onMounted, reactive, ref } from 'vue';
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
+import { modelsApi, type CatalogModel, type ModelPayload, type ModelType } from '../../api/models';
+import { PROVIDERS, providerMeta, type ModelProvider } from '../../constants/providers';
+
+type ModelForm = ModelPayload & {
+  id?: string;
+};
+
+const ProviderLabel = defineComponent({
+  props: {
+    provider: { type: String, required: true },
+  },
+  setup(props) {
+    return () => {
+      const meta = providerMeta(props.provider);
+      if (!meta) return h('span', props.provider);
+      return h('span', { class: 'provider-label' }, [
+        h('span', { class: 'provider-logo-frame', 'aria-hidden': 'true' }, [
+          h('img', { class: 'provider-logo', src: meta.logo, alt: '' }),
+        ]),
+        h('span', meta.label),
+      ]);
+    };
+  },
+});
+
+const createForm = (): ModelForm => ({
+  id: undefined,
+  name: '',
+  type: 'openai',
+  provider: 'openai',
+});
+
+const items = ref<CatalogModel[]>([]);
+const loading = ref(false);
+const typeFilter = ref<ModelType | ''>('');
+const providerFilter = ref<ModelProvider | ''>('');
+const dialog = ref(false);
+const formRef = ref<FormInstance>();
+const form = reactive<ModelForm>(createForm());
+const providerTouched = ref(false);
+const editing = computed(() => Boolean(form.id));
+
+const rules: FormRules<ModelForm> = {
+  name: [{ required: true, message: '请输入模型名称', trigger: 'blur' }],
+  type: [{ required: true, message: '请选择协议类型', trigger: 'change' }],
+  provider: [{ required: true, message: '请选择供应商', trigger: 'change' }],
+};
+
 const load = async () => {
   loading.value = true;
   try {
-    items.value = (await modelsApi.list(kind.value || undefined)).items;
+    items.value = (
+      await modelsApi.list({
+        type: typeFilter.value || undefined,
+        provider: providerFilter.value || undefined,
+      })
+    ).items;
   } finally {
     loading.value = false;
   }
 };
+
 const open = (row?: CatalogModel) => {
-  editing.value = !!row;
-  Object.assign(form, row ? { ...row } : { name: '', type: 'openai' });
+  providerTouched.value = Boolean(row);
+  Object.assign(
+    form,
+    row ? { id: row.id, name: row.name, type: row.type, provider: row.provider } : createForm(),
+  );
   dialog.value = true;
+  nextTick(() => formRef.value?.clearValidate());
 };
+
+const changeType = (type: ModelType) => {
+  if (!providerTouched.value) form.provider = type;
+};
+
 const save = async () => {
+  const valid = await formRef.value?.validate().catch(() => false);
+  if (!valid) return;
+  const payload: ModelPayload = {
+    name: form.name.trim(),
+    type: form.type,
+    provider: form.provider,
+  };
   try {
-    editing.value ? await modelsApi.update(form.id, form) : await modelsApi.create(form);
+    if (form.id) await modelsApi.update(form.id, payload);
+    else await modelsApi.create(payload);
     dialog.value = false;
     await load();
     ElMessage.success('保存成功');
-  } catch (e) {
-    ElMessage.error(String(e));
+  } catch (error) {
+    ElMessage.error(String(error));
   }
 };
+
 const setDefault = async (row: CatalogModel) => {
   await modelsApi.setDefault(row.id);
   await load();
 };
+
 const remove = async (row: CatalogModel) => {
   try {
     await ElMessageBox.confirm(`确认删除 ${row.name}？`, '提示');
@@ -96,5 +213,49 @@ const remove = async (row: CatalogModel) => {
     if (error !== 'cancel' && error !== 'close') ElMessage.error(String(error));
   }
 };
+
 onMounted(load);
 </script>
+
+<style scoped>
+.model-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.type-filter {
+  width: 150px;
+}
+
+.provider-filter {
+  width: 180px;
+}
+
+:deep(.provider-label) {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+:deep(.provider-logo-frame) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  padding: 2px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 5px;
+  background: #fff;
+}
+
+:deep(.provider-logo) {
+  display: block;
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+</style>

@@ -211,3 +211,78 @@ async fn removes_legacy_multiplier_constraint_without_losing_accounts() {
     upgraded.close().await;
     let _ = std::fs::remove_file(path);
 }
+
+#[tokio::test]
+async fn backfills_model_provider_without_losing_models_or_default_constraints() {
+    let path = std::env::temp_dir().join(format!(
+        "aimux-model-provider-migration-{}.sqlite3",
+        uuid::Uuid::new_v4()
+    ));
+    let legacy = create_legacy_database(&path).await;
+    for (id, name, kind, is_default) in [
+        ("legacy-openai", "旧 OpenAI 模型", "openai", 1_i64),
+        ("legacy-anthropic", "旧 Anthropic 模型", "anthropic", 1_i64),
+    ] {
+        sqlx::query("INSERT INTO models (id, name, type, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+            .bind(id)
+            .bind(name)
+            .bind(kind)
+            .bind(is_default)
+            .bind("2026-01-01T00:00:00Z")
+            .bind("2026-01-02T00:00:00Z")
+            .execute(&legacy)
+            .await
+            .expect("写入旧模型失败");
+    }
+    legacy.close().await;
+
+    let upgraded = connect(&path).await.expect("升级旧模型数据库失败");
+    let models: Vec<(String, String, String, String, i64, String, String)> = sqlx::query_as(
+        "SELECT id, name, type, provider, is_default, created_at, updated_at FROM models ORDER BY id",
+    )
+    .fetch_all(&upgraded)
+    .await
+    .expect("读取迁移后的模型失败");
+    assert_eq!(models.len(), 2);
+    assert_eq!(models[0].0, "legacy-anthropic");
+    assert_eq!(models[0].3, "anthropic");
+    assert_eq!(models[0].4, 1);
+    assert_eq!(models[1].0, "legacy-openai");
+    assert_eq!(models[1].3, "openai");
+    assert_eq!(models[1].4, 1);
+    assert_eq!(models[1].5, "2026-01-01T00:00:00Z");
+    assert_eq!(models[1].6, "2026-01-02T00:00:00Z");
+
+    sqlx::query("UPDATE models SET provider = 'custom-relay' WHERE id = 'legacy-openai'")
+        .execute(&upgraded)
+        .await
+        .expect("数据库不应限制供应商枚举");
+    let provider: String =
+        sqlx::query_scalar("SELECT provider FROM models WHERE id = 'legacy-openai'")
+            .fetch_one(&upgraded)
+            .await
+            .expect("读取自定义供应商失败");
+    assert_eq!(provider, "custom-relay");
+
+    let duplicate_default = sqlx::query("INSERT INTO models (id, name, type, provider, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)")
+        .bind("duplicate-default")
+        .bind("重复默认")
+        .bind("openai")
+        .bind("openai")
+        .bind("2026-01-01T00:00:00Z")
+        .bind("2026-01-01T00:00:00Z")
+        .execute(&upgraded)
+        .await;
+    assert!(duplicate_default.is_err());
+
+    let provider_index: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='ix_models_provider_type'",
+    )
+    .fetch_one(&upgraded)
+    .await
+    .expect("读取供应商索引失败");
+    assert_eq!(provider_index, 1);
+
+    upgraded.close().await;
+    let _ = std::fs::remove_file(path);
+}
