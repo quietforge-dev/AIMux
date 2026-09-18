@@ -20,7 +20,7 @@ pub async fn list(
     if provider.is_some() {
         sql.push_str(" AND provider=?");
     }
-    sql.push_str(" ORDER BY type, is_default DESC, provider, lower(name), id");
+    sql.push_str(" ORDER BY type, provider, is_default DESC, lower(name)");
 
     let mut query = sqlx::query_as::<_, CatalogModel>(&sql);
     if let Some(value) = kind {

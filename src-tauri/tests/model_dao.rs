@@ -120,3 +120,68 @@ async fn filters_and_updates_model_provider_without_changing_default_grouping() 
     pool.close().await;
     let _ = std::fs::remove_file(path);
 }
+
+#[tokio::test]
+async fn lists_models_by_type_provider_default_and_name() {
+    let path = std::env::temp_dir().join(format!(
+        "aimux-model-order-{}.sqlite3",
+        uuid::Uuid::new_v4()
+    ));
+    let pool = connect(&path).await.expect("创建数据库失败");
+
+    create(
+        &pool,
+        ModelCreate {
+            name: "claude-z".into(),
+            model_type: "anthropic".into(),
+            provider: "anthropic".into(),
+        },
+    )
+    .await
+    .expect("创建 Anthropic 模型失败");
+    create(
+        &pool,
+        ModelCreate {
+            name: "deepseek-z".into(),
+            model_type: "openai".into(),
+            provider: "deepseek".into(),
+        },
+    )
+    .await
+    .expect("创建 DeepSeek Z 模型失败");
+    create(
+        &pool,
+        ModelCreate {
+            name: "deepseek-a".into(),
+            model_type: "openai".into(),
+            provider: "deepseek".into(),
+        },
+    )
+    .await
+    .expect("创建 DeepSeek A 模型失败");
+    let openai_default = create(
+        &pool,
+        ModelCreate {
+            name: "gpt-default".into(),
+            model_type: "openai".into(),
+            provider: "openai".into(),
+        },
+    )
+    .await
+    .expect("创建 OpenAI 默认模型失败");
+    set_default(&pool, openai_default)
+        .await
+        .expect("设置 OpenAI 默认模型失败");
+
+    let listed = list(&pool, None, None).await.expect("查询模型列表失败");
+    assert_eq!(
+        listed
+            .iter()
+            .map(|model| model.name.as_str())
+            .collect::<Vec<_>>(),
+        ["claude-z", "deepseek-a", "deepseek-z", "gpt-default"]
+    );
+
+    pool.close().await;
+    let _ = std::fs::remove_file(path);
+}
