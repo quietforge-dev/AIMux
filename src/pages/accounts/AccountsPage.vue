@@ -72,7 +72,15 @@
           </span>
         </template>
       </el-table-column>
-      <el-table-column prop="test_default_model" label="测试默认模型" min-width="150" />
+      <el-table-column label="测试默认模型" min-width="170">
+        <template #default="{ row }">
+          <div v-if="row.test_default_model" class="model-with-provider">
+            <ProviderLogo :provider="providerForModel(row.type, row.test_default_model)" />
+            <span>{{ row.test_default_model }}</span>
+          </div>
+          <span v-else>-</span>
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="330" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="open(row)">编辑</el-button>
@@ -132,6 +140,7 @@ import { useAccountsStore } from '../../stores/accounts';
 import { useModelsStore } from '../../stores/models';
 import AccountFormDialog from '../../components/accounts/AccountFormDialog.vue';
 import AccountTestDialog from '../../components/accounts/AccountTestDialog.vue';
+import ProviderLogo from '../../components/models/ProviderLogo.vue';
 
 const store = useAccountsStore();
 const models = useModelsStore();
@@ -144,6 +153,14 @@ const testAccount = ref<Account>();
 const statusFilter = ref<'all' | Account['status']>('active');
 const nameFilter = ref('');
 const typeFilter = ref<Account['type']>();
+const modelProviders = computed(
+  () =>
+    new Map<string, string>(
+      models.items.map((model) => [`${model.type}\u0000${model.name}`, model.provider] as const),
+    ),
+);
+const providerForModel = (type: Account['type'], name?: string) =>
+  name ? modelProviders.value.get(`${type}\u0000${name}`) : undefined;
 const testModels = computed(() => {
   const account = testAccount.value;
   if (!account) return [];
@@ -395,5 +412,11 @@ onMounted(load);
 
 .masked-api-key {
   font-family: monospace;
+}
+
+.model-with-provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 </style>

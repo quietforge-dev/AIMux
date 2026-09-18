@@ -32,9 +32,13 @@
         <template #default="{ row }">{{ Number(row.multiplier).toFixed(2) }}</template>
       </el-table-column>
       <el-table-column prop="priority" label="优先级" width="70" />
-      <el-table-column label="测试模型" min-width="120">
+      <el-table-column label="测试模型" min-width="150">
         <template #default="{ row }">
-          {{ row.model || latest(row.records)?.model || '-' }}
+          <div v-if="displayModel(row)" class="model-with-provider">
+            <ProviderLogo :provider="providerForModel(row.account_type, displayModel(row))" />
+            <span>{{ displayModel(row) }}</span>
+          </div>
+          <span v-else>-</span>
         </template>
       </el-table-column>
       <el-table-column label="最近检查" width="160">
@@ -81,23 +85,32 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { monitorApi, type MonitorItem, type MonitorRecord } from '../../api/monitor';
 import { settingsApi } from '../../api/settings';
+import { useModelsStore } from '../../stores/models';
+import ProviderLogo from '../../components/models/ProviderLogo.vue';
 import { ElMessage } from 'element-plus';
 
 const STATUS_COUNT = 30;
 const SLOW_THRESHOLD = 20_000;
+const models = useModelsStore();
 const items = ref<MonitorItem[]>([]);
 const loading = ref(false);
 const enabled = ref(false);
 const savingEnabled = ref(false);
 const timeRange = ref<[Date, Date] | null>(null);
 const savingRange = ref(false);
+const modelProviders = computed(
+  () =>
+    new Map<string, string>(
+      models.items.map((model) => [`${model.type}\u0000${model.name}`, model.provider] as const),
+    ),
+);
 let timer: number | undefined;
 
 const load = async () => {
   if (loading.value) return;
   loading.value = true;
   try {
-    const result = await monitorApi.list();
+    const [result] = await Promise.all([monitorApi.list(), models.load()]);
     items.value = result.items;
     enabled.value = result.monitoring_enabled;
     timeRange.value = toRange(result.monitoring_start_time, result.monitoring_end_time);
@@ -180,6 +193,11 @@ const changeRange = async () => {
 
 const latest = (records: MonitorRecord[]) => records.at(-1);
 
+const displayModel = (item: MonitorItem) => item.model || latest(item.records)?.model || '';
+
+const providerForModel = (type: string, name?: string) =>
+  name ? modelProviders.value.get(`${type}\u0000${name}`) : undefined;
+
 const normalized = (records: MonitorRecord[]) => {
   const recent = records.slice(-STATUS_COUNT);
   const emptyCount = STATUS_COUNT - recent.length;
@@ -234,6 +252,12 @@ onUnmounted(() => {
 .window-hint {
   color: #e0a800;
   font-size: 12px;
+}
+
+.model-with-provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .checks {
