@@ -13,26 +13,13 @@
           <el-option label="OpenAI" value="openai" />
           <el-option label="Anthropic" value="anthropic" />
         </el-select>
-        <el-select
+        <ProviderSelect
           v-model="providerFilter"
           clearable
-          filterable
           placeholder="供应商"
           class="provider-filter"
           @change="load"
-        >
-          <template #label="{ value }">
-            <ProviderLabel v-if="providerMeta(String(value))" :provider="String(value)" />
-          </template>
-          <el-option
-            v-for="provider in PROVIDERS"
-            :key="provider.value"
-            :label="provider.label"
-            :value="provider.value"
-          >
-            <ProviderLabel :provider="provider.value" />
-          </el-option>
-        </el-select>
+        />
         <el-button :loading="loading" @click="load">刷新</el-button>
         <el-button type="primary" @click="open()">新增模型</el-button>
       </div>
@@ -72,24 +59,11 @@
           </el-select>
         </el-form-item>
         <el-form-item label="供应商" prop="provider">
-          <el-select
+          <ProviderSelect
             v-model="form.provider"
-            filterable
             style="width: 100%"
             @change="providerTouched = true"
-          >
-            <template #label="{ value }">
-              <ProviderLabel v-if="providerMeta(String(value))" :provider="String(value)" />
-            </template>
-            <el-option
-              v-for="provider in PROVIDERS"
-              :key="provider.value"
-              :label="provider.label"
-              :value="provider.value"
-            >
-              <ProviderLabel :provider="provider.value" />
-            </el-option>
-          </el-select>
+          />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -101,32 +75,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, nextTick, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import { modelsApi, type CatalogModel, type ModelPayload, type ModelType } from '../../api/models';
-import { PROVIDERS, providerMeta, type ModelProvider } from '../../constants/providers';
+import ProviderLabel from '../../components/models/ProviderLabel.vue';
+import ProviderSelect from '../../components/models/ProviderSelect.vue';
+import type { ModelProvider } from '../../constants/providers';
 
 type ModelForm = ModelPayload & {
   id?: string;
 };
-
-const ProviderLabel = defineComponent({
-  props: {
-    provider: { type: String, required: true },
-  },
-  setup(props) {
-    return () => {
-      const meta = providerMeta(props.provider);
-      if (!meta) return h('span', props.provider);
-      return h('span', { class: 'provider-label' }, [
-        h('span', { class: 'provider-logo-frame', 'aria-hidden': 'true' }, [
-          h('img', { class: 'provider-logo', src: meta.logo, alt: '' }),
-        ]),
-        h('span', meta.label),
-      ]);
-    };
-  },
-});
 
 const createForm = (): ModelForm => ({
   id: undefined,
@@ -230,32 +188,5 @@ onMounted(load);
 
 .provider-filter {
   width: 180px;
-}
-
-:deep(.provider-label) {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-:deep(.provider-logo-frame) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  flex: 0 0 22px;
-  padding: 2px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 5px;
-  background: #fff;
-}
-
-:deep(.provider-logo) {
-  display: block;
-  width: 18px;
-  height: 18px;
-  object-fit: contain;
 }
 </style>

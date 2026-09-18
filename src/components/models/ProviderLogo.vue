@@ -1,5 +1,11 @@
 <template>
-  <span v-if="meta" class="provider-logo-frame" :title="meta.label" :aria-label="meta.label">
+  <span
+    v-if="meta"
+    class="provider-logo-frame"
+    :title="props.decorative ? undefined : meta.label"
+    :aria-label="props.decorative ? undefined : meta.label"
+    :aria-hidden="props.decorative ? 'true' : undefined"
+  >
     <img class="provider-logo" :src="meta.logo" alt="" />
   </span>
 </template>
@@ -10,6 +16,7 @@ import { providerMeta } from '../../constants/providers';
 
 const props = defineProps<{
   provider?: string;
+  decorative?: boolean;
 }>();
 
 const meta = computed(() => (props.provider ? providerMeta(props.provider) : undefined));
