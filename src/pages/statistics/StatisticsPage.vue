@@ -2,7 +2,10 @@
   <div class="page">
     <div class="page-toolbar">
       <h2 class="page-title">数据统计</h2>
-      <el-button :loading="loading" @click="load">刷新</el-button>
+      <div>
+        <el-button :loading="loading" @click="load">刷新</el-button>
+        <el-button :disabled="!hasCustomWidths" @click="resetColumnWidths">恢复默认列宽</el-button>
+      </div>
     </div>
 
     <div class="summary-cards">
@@ -23,29 +26,86 @@
 
     <el-divider />
     <h3>启用账号今日统计</h3>
-    <el-table :data="accounts" border class="compact-table">
-      <el-table-column prop="account_name" label="账号" min-width="180" />
-      <el-table-column prop="account_type" label="类型" width="90" />
-      <el-table-column prop="multiplier" label="倍率" width="80">
+    <el-table
+      :key="tableKey"
+      :data="accounts"
+      border
+      class="compact-table"
+      @header-dragend="handleColumnResize"
+    >
+      <el-table-column
+        column-key="accountName"
+        prop="account_name"
+        label="账号"
+        :width="columnWidth('accountName')"
+        min-width="180"
+      />
+      <el-table-column
+        column-key="accountType"
+        prop="account_type"
+        label="类型"
+        :width="columnWidth('accountType', 90)"
+      />
+      <el-table-column
+        column-key="multiplier"
+        prop="multiplier"
+        label="倍率"
+        :width="columnWidth('multiplier', 80)"
+      >
         <template #default="{ row }">{{ Number(row.multiplier).toFixed(2) }}</template>
       </el-table-column>
-      <el-table-column prop="priority" label="优先级" width="80" />
-      <el-table-column label="总Token" min-width="110">
+      <el-table-column
+        column-key="priority"
+        prop="priority"
+        label="优先级"
+        :width="columnWidth('priority', 80)"
+      />
+      <el-table-column
+        column-key="totalTokens"
+        label="总Token"
+        :width="columnWidth('totalTokens')"
+        min-width="110"
+      >
         <template #default="{ row }">{{ formatToken(row.total_tokens) }}</template>
       </el-table-column>
-      <el-table-column label="总输入" min-width="110">
+      <el-table-column
+        column-key="inputTokens"
+        label="总输入"
+        :width="columnWidth('inputTokens')"
+        min-width="110"
+      >
         <template #default="{ row }">{{ formatToken(row.input_tokens) }}</template>
       </el-table-column>
-      <el-table-column label="总输出" min-width="110">
+      <el-table-column
+        column-key="outputTokens"
+        label="总输出"
+        :width="columnWidth('outputTokens')"
+        min-width="110"
+      >
         <template #default="{ row }">{{ formatToken(row.output_tokens) }}</template>
       </el-table-column>
-      <el-table-column label="总缓存" min-width="110">
+      <el-table-column
+        column-key="cachedTokens"
+        label="总缓存"
+        :width="columnWidth('cachedTokens')"
+        min-width="110"
+      >
         <template #default="{ row }">{{ formatToken(row.cached_tokens) }}</template>
       </el-table-column>
-      <el-table-column label="缓存率" min-width="100">
+      <el-table-column
+        column-key="cacheRate"
+        label="缓存率"
+        :width="columnWidth('cacheRate')"
+        min-width="100"
+      >
         <template #default="{ row }">{{ rate(row.cache_rate) }}</template>
       </el-table-column>
-      <el-table-column label="最近20次缓存率" min-width="150">
+      <el-table-column
+        column-key="recentCacheRate"
+        label="最近20次缓存率"
+        :width="columnWidth('recentCacheRate')"
+        min-width="150"
+      >
         <template #default="{ row }">
           <el-tooltip
             :content="`今日最近 ${row.recent_cache_count} 条有效使用记录，按输入Token加权计算`"
@@ -63,7 +123,10 @@
 import { computed, onMounted, ref } from 'vue';
 import { usageApi, type Statistics, type TokenSummary } from '../../api/usage';
 import { formatToken } from '../../utils/token';
+import { useTableColumnWidths } from '../../composables/useTableColumnWidths';
 
+const { tableKey, hasCustomWidths, columnWidth, handleColumnResize, resetColumnWidths } =
+  useTableColumnWidths('statistics');
 type SummaryKey = 'total' | 'yesterday' | 'today';
 type MetricKey = keyof TokenSummary;
 

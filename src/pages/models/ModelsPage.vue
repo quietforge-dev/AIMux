@@ -21,25 +21,53 @@
           @change="load"
         />
         <el-button :loading="loading" @click="load">刷新</el-button>
+        <el-button :disabled="!hasCustomWidths" @click="resetColumnWidths">恢复默认列宽</el-button>
         <el-button type="primary" @click="open()">新增模型</el-button>
       </div>
     </div>
 
-    <el-table :data="items" v-loading="loading" border class="compact-table">
-      <el-table-column prop="name" label="模型名称" min-width="260" />
-      <el-table-column prop="provider" label="供应商" width="180">
+    <el-table
+      :key="tableKey"
+      :data="items"
+      v-loading="loading"
+      border
+      class="compact-table"
+      @header-dragend="handleColumnResize"
+    >
+      <el-table-column
+        column-key="name"
+        prop="name"
+        label="模型名称"
+        :width="columnWidth('name')"
+        min-width="260"
+      />
+      <el-table-column
+        column-key="provider"
+        prop="provider"
+        label="供应商"
+        :width="columnWidth('provider', 180)"
+      >
         <template #default="{ row }">
           <ProviderLabel :provider="row.provider" />
         </template>
       </el-table-column>
-      <el-table-column prop="type" label="协议类型" width="140" />
-      <el-table-column label="测试默认" width="130">
+      <el-table-column
+        column-key="type"
+        prop="type"
+        label="协议类型"
+        :width="columnWidth('type', 140)"
+      />
+      <el-table-column
+        column-key="isDefault"
+        label="测试默认"
+        :width="columnWidth('isDefault', 130)"
+      >
         <template #default="{ row }">
           <el-tag v-if="row.is_default" type="success">默认</el-tag>
           <el-button v-else link type="primary" @click="setDefault(row)">设为默认</el-button>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="150">
+      <el-table-column column-key="actions" label="操作" :width="columnWidth('actions', 150)">
         <template #default="{ row }">
           <el-button link type="primary" @click="open(row)">编辑</el-button>
           <el-button link type="danger" @click="remove(row)">删除</el-button>
@@ -81,7 +109,10 @@ import { modelsApi, type CatalogModel, type ModelPayload, type ModelType } from 
 import ProviderLabel from '../../components/models/ProviderLabel.vue';
 import ProviderSelect from '../../components/models/ProviderSelect.vue';
 import type { ModelProvider } from '../../constants/providers';
+import { useTableColumnWidths } from '../../composables/useTableColumnWidths';
 
+const { tableKey, hasCustomWidths, columnWidth, handleColumnResize, resetColumnWidths } =
+  useTableColumnWidths('models');
 type ModelForm = ModelPayload & {
   id?: string;
 };

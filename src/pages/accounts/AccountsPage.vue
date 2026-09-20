@@ -4,6 +4,7 @@
       <h2 class="page-title">账号管理</h2>
       <div>
         <el-button :loading="store.loading" @click="load">刷新</el-button>
+        <el-button :disabled="!hasCustomWidths" @click="resetColumnWidths">恢复默认列宽</el-button>
         <el-button @click="openImport"
           ><el-icon><Upload /></el-icon>从 JSON 导入</el-button
         >
@@ -32,27 +33,66 @@
       <el-tab-pane label="禁用" name="disabled" />
     </el-tabs>
 
-    <el-table :data="store.items" v-loading="store.loading" class="compact-table" border stripe>
-      <el-table-column prop="name" label="名称" min-width="170" />
-      <el-table-column label="密钥" min-width="150">
+    <el-table
+      :key="tableKey"
+      :data="store.items"
+      v-loading="store.loading"
+      class="compact-table"
+      border
+      stripe
+      @header-dragend="handleColumnResize"
+    >
+      <el-table-column
+        column-key="name"
+        prop="name"
+        label="名称"
+        :width="columnWidth('name')"
+        min-width="170"
+      />
+      <el-table-column
+        column-key="apiKey"
+        label="密钥"
+        :width="columnWidth('apiKey')"
+        min-width="150"
+      >
         <template #default="{ row }">
           <span class="masked-api-key">{{ maskApiKey(row.api_key) }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="multiplier" label="倍率" width="90">
+      <el-table-column
+        column-key="multiplier"
+        prop="multiplier"
+        label="倍率"
+        :width="columnWidth('multiplier', 90)"
+      >
         <template #default="{ row }">
           <span>{{ Number(row.multiplier).toFixed(2) }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="type" label="类型" width="100" />
-      <el-table-column prop="status" label="状态" width="100">
+      <el-table-column
+        column-key="type"
+        prop="type"
+        label="类型"
+        :width="columnWidth('type', 100)"
+      />
+      <el-table-column
+        column-key="status"
+        prop="status"
+        label="状态"
+        :width="columnWidth('status', 100)"
+      >
         <template #default="{ row }">
           <el-button link :type="row.status === 'active' ? 'success' : 'info'" @click="toggle(row)">
             {{ row.status === 'active' ? '启用' : '禁用' }}
           </el-button>
         </template>
       </el-table-column>
-      <el-table-column prop="priority" label="优先级" width="160">
+      <el-table-column
+        column-key="priority"
+        prop="priority"
+        label="优先级"
+        :width="columnWidth('priority', 160)"
+      >
         <template #default="{ row }">
           <el-input-number
             v-model="row.priority"
@@ -63,7 +103,11 @@
           />
         </template>
       </el-table-column>
-      <el-table-column label="平均耗时" width="105">
+      <el-table-column
+        column-key="averageDuration"
+        label="平均耗时"
+        :width="columnWidth('averageDuration', 105)"
+      >
         <template #default="{ row }">
           <span
             :class="(row.monitor_average_duration_ms ?? 0) > SLOW_DURATION_MS ? 'warning-text' : ''"
@@ -72,7 +116,12 @@
           </span>
         </template>
       </el-table-column>
-      <el-table-column label="测试默认模型" min-width="170">
+      <el-table-column
+        column-key="defaultModel"
+        label="测试默认模型"
+        :width="columnWidth('defaultModel')"
+        min-width="170"
+      >
         <template #default="{ row }">
           <div v-if="row.test_default_model" class="model-with-provider">
             <ProviderLogo :provider="providerForModel(row.type, row.test_default_model)" />
@@ -81,7 +130,12 @@
           <span v-else>-</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="330" fixed="right">
+      <el-table-column
+        column-key="actions"
+        label="操作"
+        :width="columnWidth('actions', 330)"
+        fixed="right"
+      >
         <template #default="{ row }">
           <el-button link type="primary" @click="open(row)">编辑</el-button>
           <el-button link type="primary" title="复制账号" @click="copy(row)">
@@ -141,7 +195,10 @@ import { useModelsStore } from '../../stores/models';
 import AccountFormDialog from '../../components/accounts/AccountFormDialog.vue';
 import AccountTestDialog from '../../components/accounts/AccountTestDialog.vue';
 import ProviderLogo from '../../components/models/ProviderLogo.vue';
+import { useTableColumnWidths } from '../../composables/useTableColumnWidths';
 
+const { tableKey, hasCustomWidths, columnWidth, handleColumnResize, resetColumnWidths } =
+  useTableColumnWidths('accounts');
 const store = useAccountsStore();
 const models = useModelsStore();
 const dialog = ref(false);

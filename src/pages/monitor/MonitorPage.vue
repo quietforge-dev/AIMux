@@ -22,17 +22,52 @@
         />
         <span v-if="enabled && !inWindow" class="window-hint">当前不在监控时段</span>
         <el-button :loading="loading" @click="load">刷新</el-button>
+        <el-button :disabled="!hasCustomWidths" @click="resetColumnWidths">恢复默认列宽</el-button>
       </div>
     </div>
 
-    <el-table :data="items" v-loading="loading" border class="compact-table">
-      <el-table-column prop="account_name" label="账号" min-width="160" fixed="left" />
-      <el-table-column prop="account_type" label="类型" width="90" />
-      <el-table-column prop="multiplier" label="倍率" width="60">
+    <el-table
+      :key="tableKey"
+      :data="items"
+      v-loading="loading"
+      border
+      class="compact-table"
+      @header-dragend="handleColumnResize"
+    >
+      <el-table-column
+        column-key="accountName"
+        prop="account_name"
+        label="账号"
+        :width="columnWidth('accountName')"
+        min-width="160"
+        fixed="left"
+      />
+      <el-table-column
+        column-key="accountType"
+        prop="account_type"
+        label="类型"
+        :width="columnWidth('accountType', 90)"
+      />
+      <el-table-column
+        column-key="multiplier"
+        prop="multiplier"
+        label="倍率"
+        :width="columnWidth('multiplier', 60)"
+      >
         <template #default="{ row }">{{ Number(row.multiplier).toFixed(2) }}</template>
       </el-table-column>
-      <el-table-column prop="priority" label="优先级" width="70" />
-      <el-table-column label="测试模型" min-width="160">
+      <el-table-column
+        column-key="priority"
+        prop="priority"
+        label="优先级"
+        :width="columnWidth('priority', 70)"
+      />
+      <el-table-column
+        column-key="testModel"
+        label="测试模型"
+        :width="columnWidth('testModel')"
+        min-width="160"
+      >
         <template #default="{ row }">
           <div v-if="displayModel(row)" class="model-with-provider">
             <ProviderLogo :provider="providerForModel(row.account_type, displayModel(row))" />
@@ -41,10 +76,18 @@
           <span v-else>-</span>
         </template>
       </el-table-column>
-      <el-table-column label="最近检查" width="170">
+      <el-table-column
+        column-key="lastCheckedAt"
+        label="最近检查"
+        :width="columnWidth('lastCheckedAt', 170)"
+      >
         <template #default="{ row }">{{ formatTime(latest(row.records)?.checked_at) }}</template>
       </el-table-column>
-      <el-table-column label="平均耗时" width="90">
+      <el-table-column
+        column-key="averageDuration"
+        label="平均耗时"
+        :width="columnWidth('averageDuration', 90)"
+      >
         <template #default="{ row }">
           <span
             :class="(row.monitor_average_duration_ms ?? 0) > SLOW_THRESHOLD ? 'warning-text' : ''"
@@ -53,7 +96,7 @@
           </span>
         </template>
       </el-table-column>
-      <el-table-column label="结果" width="60">
+      <el-table-column column-key="result" label="结果" :width="columnWidth('result', 60)">
         <template #default="{ row }">
           <span
             v-if="latest(row.records)"
@@ -64,7 +107,12 @@
           <span v-else>-</span>
         </template>
       </el-table-column>
-      <el-table-column label="最近30次检测记录" min-width="620">
+      <el-table-column
+        column-key="recentChecks"
+        label="最近30次检测记录"
+        :width="columnWidth('recentChecks')"
+        min-width="620"
+      >
         <template #default="{ row }">
           <div class="checks">
             <span
@@ -88,7 +136,10 @@ import { settingsApi } from '../../api/settings';
 import { useModelsStore } from '../../stores/models';
 import ProviderLogo from '../../components/models/ProviderLogo.vue';
 import { ElMessage } from 'element-plus';
+import { useTableColumnWidths } from '../../composables/useTableColumnWidths';
 
+const { tableKey, hasCustomWidths, columnWidth, handleColumnResize, resetColumnWidths } =
+  useTableColumnWidths('monitor');
 const STATUS_COUNT = 30;
 const SLOW_THRESHOLD = 20_000;
 const models = useModelsStore();

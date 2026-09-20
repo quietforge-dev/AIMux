@@ -4,6 +4,7 @@
       <h2 class="page-title">使用记录</h2>
       <div>
         <el-button @click="reset">重置</el-button>
+        <el-button :disabled="!hasCustomWidths" @click="resetColumnWidths">恢复默认列宽</el-button>
         <el-button @click="cleanupVisible = true">清除历史记录</el-button>
       </div>
     </div>
@@ -29,16 +30,57 @@
       </div>
     </div>
 
-    <el-table :data="items" v-loading="loading" border stripe class="compact-table">
-      <el-table-column label="时间" min-width="110">
+    <el-table
+      :key="tableKey"
+      :data="items"
+      v-loading="loading"
+      border
+      stripe
+      class="compact-table"
+      @header-dragend="handleColumnResize"
+    >
+      <el-table-column
+        column-key="startedAt"
+        label="时间"
+        :width="columnWidth('startedAt')"
+        min-width="110"
+      >
         <template #default="{ row }">{{ formatTime(row.started_at) }}</template>
       </el-table-column>
-      <el-table-column prop="account_name" label="账号" min-width="120" />
-      <el-table-column prop="account_type" label="类型" width="90" />
-      <el-table-column prop="model" label="模型" min-width="130" />
-      <el-table-column prop="reasoning_effort" label="推理强度" width="90" />
-      <el-table-column prop="endpoint" label="接口" min-width="140" />
-      <el-table-column label="结果" width="80">
+      <el-table-column
+        column-key="accountName"
+        prop="account_name"
+        label="账号"
+        :width="columnWidth('accountName')"
+        min-width="120"
+      />
+      <el-table-column
+        column-key="accountType"
+        prop="account_type"
+        label="类型"
+        :width="columnWidth('accountType', 90)"
+      />
+      <el-table-column
+        column-key="model"
+        prop="model"
+        label="模型"
+        :width="columnWidth('model')"
+        min-width="130"
+      />
+      <el-table-column
+        column-key="reasoningEffort"
+        prop="reasoning_effort"
+        label="推理强度"
+        :width="columnWidth('reasoningEffort', 90)"
+      />
+      <el-table-column
+        column-key="endpoint"
+        prop="endpoint"
+        label="接口"
+        :width="columnWidth('endpoint')"
+        min-width="140"
+      />
+      <el-table-column column-key="result" label="结果" :width="columnWidth('result', 80)">
         <template #default="{ row }">
           <el-tooltip
             v-if="isFailure(row)"
@@ -52,7 +94,7 @@
           <span v-else :class="resultClass(row)">{{ resultText(row) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="延迟" width="110">
+      <el-table-column column-key="latency" label="延迟" :width="columnWidth('latency', 110)">
         <template #default="{ row }">
           <div class="latency-cell">
             <div :class="(row.first_token_ms ?? 0) > 10_000 ? 'warning-text' : ''">
@@ -64,13 +106,26 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="吞吐量" width="120">
+      <el-table-column
+        column-key="throughput"
+        label="吞吐量"
+        :width="columnWidth('throughput', 120)"
+      >
         <template #default="{ row }">{{ formatThroughput(row) }}</template>
       </el-table-column>
-      <el-table-column label="重试次数" width="90">
+      <el-table-column
+        column-key="retryCount"
+        label="重试次数"
+        :width="columnWidth('retryCount', 90)"
+      >
         <template #default="{ row }">{{ displayRetryCount(row.attempts) }}</template>
       </el-table-column>
-      <el-table-column label="Token用量" min-width="180">
+      <el-table-column
+        column-key="tokenUsage"
+        label="Token用量"
+        :width="columnWidth('tokenUsage')"
+        min-width="180"
+      >
         <template #default="{ row }">
           <div class="token-usage-cell">
             <div>
@@ -85,7 +140,12 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="80" fixed="right">
+      <el-table-column
+        column-key="actions"
+        label="操作"
+        :width="columnWidth('actions', 80)"
+        fixed="right"
+      >
         <template #default="{ row }">
           <el-button link type="primary" @click="showDetail(row.id)">详情</el-button>
         </template>
@@ -114,7 +174,10 @@ import UsageCleanupDialog from '../../components/usage/UsageCleanupDialog.vue';
 import UsageDetailDialog from '../../components/usage/UsageDetailDialog.vue';
 import UsageFilter from '../../components/usage/UsageFilter.vue';
 import { formatThroughput, formatToken } from '../../utils/token';
+import { useTableColumnWidths } from '../../composables/useTableColumnWidths';
 
+const { tableKey, hasCustomWidths, columnWidth, handleColumnResize, resetColumnWidths } =
+  useTableColumnWidths('usage');
 const PAGE_SIZE = 10;
 const items = ref<UsageRecord[]>([]);
 const total = ref(0);
