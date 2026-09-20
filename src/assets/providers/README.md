@@ -12,7 +12,10 @@
 | `moonshot` | `moonshot.svg` | Moonshot AI |
 | `alibaba` | `alibaba.svg` | Alibaba Cloud |
 | `zhipu` | `zhipu.svg` | 智谱 AI |
+| `stepfun` | `stepfun.png` | StepFun |
 
 资源来自 LobeHub `@lobehub/icons-static-svg` 1.95.0，下载后保存在本地，运行时不依赖外部网络。原项目使用 MIT License，许可证副本见 `LICENSE.lobe-icons`。品牌名称和 Logo 的商标权归各自权利人所有。
+
+`stepfun.png` 来自 StepFun 开放平台官网使用的站点图标。该文件同样保存在本地，运行时不依赖外部网络。
 
 后续界面统一以 18 × 18 px 展示，Logo 与供应商名称之间保留 8 px 间距。Logo 和可见名称同时出现时，图片使用空 `alt`，避免屏幕阅读器重复朗读。

@@ -4,6 +4,7 @@ import deepseekLogo from '../assets/providers/deepseek.svg';
 import googleLogo from '../assets/providers/google.svg';
 import moonshotLogo from '../assets/providers/moonshot.svg';
 import openaiLogo from '../assets/providers/openai.svg';
+import stepfunLogo from '../assets/providers/stepfun.png';
 import xaiLogo from '../assets/providers/xai.svg';
 import zhipuLogo from '../assets/providers/zhipu.svg';
 
@@ -16,6 +17,7 @@ export const PROVIDERS = [
   { value: 'moonshot', label: 'Moonshot AI', logo: moonshotLogo },
   { value: 'alibaba', label: 'Alibaba Cloud', logo: alibabaLogo },
   { value: 'zhipu', label: '智谱 AI', logo: zhipuLogo },
+  { value: 'stepfun', label: 'StepFun', logo: stepfunLogo },
 ] as const;
 
 export type ModelProvider = (typeof PROVIDERS)[number]['value'];
