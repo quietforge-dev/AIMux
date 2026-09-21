@@ -44,16 +44,18 @@ pub async fn create_config(
     url: &str,
     token: &str,
     account_ids: &str,
+    multiplier_divisor: i64,
     enabled: bool,
     now: &str,
 ) -> Result<MultiplierMonitorConfig, AppError> {
     let id = Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO multiplier_monitor_configs(id,name,url,token,account_ids,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)")
+    sqlx::query("INSERT INTO multiplier_monitor_configs(id,name,url,token,account_ids,multiplier_divisor,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)")
         .bind(&id)
         .bind(name)
         .bind(url)
         .bind(token)
         .bind(account_ids)
+        .bind(multiplier_divisor)
         .bind(enabled)
         .bind(now)
         .bind(now)
@@ -72,17 +74,19 @@ pub async fn update_config(
     url: &str,
     token: &str,
     account_ids: &str,
+    multiplier_divisor: i64,
     enabled: bool,
     reset_schedule: bool,
     now: &str,
 ) -> Result<Option<MultiplierMonitorConfig>, AppError> {
     let result = sqlx::query(
-        "UPDATE multiplier_monitor_configs SET name=?,url=?,token=?,account_ids=?,enabled=?,last_started_at=CASE WHEN ? THEN NULL ELSE last_started_at END,updated_at=? WHERE id=?",
+        "UPDATE multiplier_monitor_configs SET name=?,url=?,token=?,account_ids=?,multiplier_divisor=?,enabled=?,last_started_at=CASE WHEN ? THEN NULL ELSE last_started_at END,updated_at=? WHERE id=?",
     )
     .bind(name)
     .bind(url)
     .bind(token)
     .bind(account_ids)
+    .bind(multiplier_divisor)
     .bind(enabled)
     .bind(reset_schedule)
     .bind(now)

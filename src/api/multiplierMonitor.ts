@@ -16,6 +16,7 @@ export type MultiplierMonitorConfig = {
   name: string;
   url: string;
   account_ids: string[];
+  multiplier_divisor: number;
   enabled: boolean;
   has_token: boolean;
   last_started_at?: string | null;
@@ -39,6 +40,7 @@ export type MultiplierMonitorCreate = {
   url: string;
   token: string;
   account_ids: string[];
+  multiplier_divisor: number;
   enabled: boolean;
 };
 

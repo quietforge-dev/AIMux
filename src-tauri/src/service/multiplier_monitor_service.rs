@@ -25,6 +25,7 @@ const LEASE_DURATION_MINUTES: i64 = 10;
 const SCHEDULE_INTERVAL_HOURS: i64 = 1;
 const MAX_ERROR_LENGTH: usize = 500;
 const CONFIG_CONCURRENCY: usize = 2;
+const MAX_MULTIPLIER_DIVISOR: i64 = 10_000;
 
 #[derive(Clone)]
 struct ParsedRemoteRate {
@@ -60,6 +61,7 @@ pub async fn create(
     let name = validate_name(&payload.name)?;
     let url = validate_url(&payload.url)?;
     let token = normalize_token(&payload.token)?;
+    let multiplier_divisor = validate_multiplier_divisor(payload.multiplier_divisor)?;
     let account_ids = normalize_account_ids(payload.account_ids)?;
     validate_accounts(pool, &account_ids).await?;
     validate_enabled_conflicts(pool, None, payload.enabled, &account_ids).await?;
@@ -71,6 +73,7 @@ pub async fn create(
         &url,
         &token,
         &account_ids_json,
+        multiplier_divisor,
         payload.enabled,
         &utc_now_string(),
     )
@@ -92,13 +95,20 @@ pub async fn update(
         None | Some("") => current.token.clone(),
         Some(value) => normalize_token(value)?,
     };
+    let multiplier_divisor = validate_multiplier_divisor(
+        payload
+            .multiplier_divisor
+            .unwrap_or(current.multiplier_divisor),
+    )?;
     let account_ids = normalize_account_ids(payload.account_ids)?;
     validate_accounts(pool, &account_ids).await?;
     validate_enabled_conflicts(pool, Some(id), payload.enabled, &account_ids).await?;
     let account_ids_json = serde_json::to_string(&account_ids)
         .map_err(|error| AppError::Internal(error.to_string()))?;
-    let reset_schedule =
-        current.url != url || current.token != token || current.account_ids != account_ids_json;
+    let reset_schedule = current.url != url
+        || current.token != token
+        || current.account_ids != account_ids_json
+        || current.multiplier_divisor != multiplier_divisor;
     let config = multiplier_monitor_dao::update_config(
         pool,
         id,
@@ -106,6 +116,7 @@ pub async fn update(
         &url,
         &token,
         &account_ids_json,
+        multiplier_divisor,
         payload.enabled,
         reset_schedule,
         &utc_now_string(),
@@ -227,7 +238,7 @@ async fn run_claimed(
             .await;
         }
     };
-    let remote_by_key = match remote_map(remote) {
+    let remote_by_key = match remote_map(remote, config.multiplier_divisor) {
         Ok(map) => map,
         Err(error) => {
             return finish_query_failure(pool, &config, owner, &started_at, started, error).await;
@@ -440,10 +451,11 @@ async fn finish_query_failure(
 
 fn remote_map(
     remote: Vec<RemoteMultiplier>,
+    multiplier_divisor: i64,
 ) -> Result<HashMap<String, ParsedRemoteRate>, MultiplierQueryError> {
     let mut result: HashMap<String, ParsedRemoteRate> = HashMap::with_capacity(remote.len());
     for item in remote {
-        let parsed = parse_remote_rate(&item);
+        let parsed = parse_remote_rate(&item, multiplier_divisor);
         if let Some(existing) = result.get(&item.key) {
             if existing.decimal != parsed.decimal || existing.error != parsed.error {
                 return Err(MultiplierQueryError {
@@ -459,7 +471,7 @@ fn remote_map(
     Ok(result)
 }
 
-fn parse_remote_rate(item: &RemoteMultiplier) -> ParsedRemoteRate {
+fn parse_remote_rate(item: &RemoteMultiplier, multiplier_divisor: i64) -> ParsedRemoteRate {
     if let Some(error) = item.rate_error.as_deref() {
         return ParsedRemoteRate {
             decimal: None,
@@ -481,19 +493,30 @@ fn parse_remote_rate(item: &RemoteMultiplier) -> ParsedRemoteRate {
             error: Some("rate_multiplier 不是有效十进制数".into()),
         };
     };
-    let normalized = decimal.normalize();
+    if !(1..=MAX_MULTIPLIER_DIVISOR).contains(&multiplier_divisor) {
+        return ParsedRemoteRate {
+            decimal: None,
+            value: None,
+            error: Some("倍率除数配置无效".into()),
+        };
+    }
+    let normalized = (decimal / Decimal::from(multiplier_divisor)).normalize();
     if normalized < Decimal::new(1, 2) || normalized > Decimal::new(99, 2) {
         return ParsedRemoteRate {
             decimal: None,
-            value: decimal.to_f64(),
-            error: Some("rate_multiplier 必须在 0.01～0.99 之间".into()),
+            value: normalized.to_f64(),
+            error: Some(format!(
+                "rate_multiplier 除以 {multiplier_divisor} 后必须在 0.01～0.99 之间"
+            )),
         };
     }
     if normalized.scale() > 2 {
         return ParsedRemoteRate {
             decimal: None,
-            value: decimal.to_f64(),
-            error: Some("rate_multiplier 最多保留两位小数".into()),
+            value: normalized.to_f64(),
+            error: Some(format!(
+                "rate_multiplier 除以 {multiplier_divisor} 后最多保留两位小数"
+            )),
         };
     }
     ParsedRemoteRate {
@@ -562,6 +585,7 @@ async fn to_view(
         name: config.name,
         url: config.url,
         account_ids: parse_account_ids(&config.account_ids)?,
+        multiplier_divisor: config.multiplier_divisor,
         enabled: config.enabled,
         has_token: !config.token.is_empty(),
         last_started_at: config.last_started_at,
@@ -613,6 +637,15 @@ fn normalize_token(value: &str) -> Result<String, AppError> {
         return Err(AppError::BadRequest("查询 token 不能为空".into()));
     }
     Ok(value.into())
+}
+
+fn validate_multiplier_divisor(value: i64) -> Result<i64, AppError> {
+    if !(1..=MAX_MULTIPLIER_DIVISOR).contains(&value) {
+        return Err(AppError::BadRequest(format!(
+            "倍率除数必须是 1～{MAX_MULTIPLIER_DIVISOR} 的整数"
+        )));
+    }
+    Ok(value)
 }
 
 fn normalize_account_ids(values: Vec<String>) -> Result<Vec<String>, AppError> {
@@ -674,7 +707,7 @@ fn truncate_error(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_token, parse_remote_rate};
+    use super::{normalize_token, parse_remote_rate, validate_multiplier_divisor};
     use crate::service::multiplier_query::RemoteMultiplier;
 
     #[test]
@@ -685,17 +718,55 @@ mod tests {
 
     #[test]
     fn validates_remote_decimal_range_and_scale() {
-        let valid = parse_remote_rate(&RemoteMultiplier {
-            key: "key".into(),
-            rate_multiplier: Some("0.300".into()),
-            rate_error: None,
-        });
+        let valid = parse_remote_rate(
+            &RemoteMultiplier {
+                key: "key".into(),
+                rate_multiplier: Some("0.300".into()),
+                rate_error: None,
+            },
+            1,
+        );
         assert!(valid.error.is_none());
-        let invalid = parse_remote_rate(&RemoteMultiplier {
-            key: "key".into(),
-            rate_multiplier: Some("0.301".into()),
-            rate_error: None,
-        });
+        let invalid = parse_remote_rate(
+            &RemoteMultiplier {
+                key: "key".into(),
+                rate_multiplier: Some("0.301".into()),
+                rate_error: None,
+            },
+            1,
+        );
         assert!(invalid.error.is_some());
+    }
+
+    #[test]
+    fn divides_remote_rate_before_validation() {
+        let parsed = parse_remote_rate(
+            &RemoteMultiplier {
+                key: "key".into(),
+                rate_multiplier: Some("3".into()),
+                rate_error: None,
+            },
+            10,
+        );
+        assert!(parsed.error.is_none());
+        assert_eq!(parsed.decimal.unwrap().to_string(), "0.3");
+
+        let too_precise = parse_remote_rate(
+            &RemoteMultiplier {
+                key: "key".into(),
+                rate_multiplier: Some("3.01".into()),
+                rate_error: None,
+            },
+            10,
+        );
+        assert!(too_precise.error.is_some());
+    }
+
+    #[test]
+    fn validates_multiplier_divisor_range() {
+        assert_eq!(validate_multiplier_divisor(1).unwrap(), 1);
+        assert_eq!(validate_multiplier_divisor(10_000).unwrap(), 10_000);
+        assert!(validate_multiplier_divisor(0).is_err());
+        assert!(validate_multiplier_divisor(10_001).is_err());
     }
 }

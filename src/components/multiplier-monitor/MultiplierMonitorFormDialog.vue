@@ -27,6 +27,19 @@
         />
         <div class="field-hint">可以填写裸 Token 或 Bearer Token，保存后不会回显明文。</div>
       </el-form-item>
+      <el-form-item label="倍率除数" prop="multiplier_divisor">
+        <el-input-number
+          v-model="form.multiplier_divisor"
+          :min="1"
+          :max="10000"
+          :step="1"
+          :precision="0"
+          controls-position="right"
+        />
+        <div class="field-hint">
+          远端返回倍率会先除以此数再与账号倍率比较。例如返回 3、实际倍率为 0.3 时填写 10。
+        </div>
+      </el-form-item>
       <el-form-item label="启用监控">
         <el-switch v-model="form.enabled" />
         <span class="field-hint inline">启用后每小时检查一次，新配置会尽快执行首次检查。</span>
@@ -89,6 +102,7 @@ type FormModel = {
   url: string;
   token: string;
   account_ids: string[];
+  multiplier_divisor: number;
   enabled: boolean;
 };
 
@@ -110,6 +124,7 @@ const createForm = (): FormModel => ({
   url: '',
   token: '',
   account_ids: [],
+  multiplier_divisor: 1,
   enabled: true,
 });
 const form = reactive<FormModel>(createForm());
@@ -168,6 +183,17 @@ const rules: FormRules<FormModel> = {
       trigger: 'blur',
     },
   ],
+  multiplier_divisor: [
+    { required: true, type: 'number', message: '请输入倍率除数', trigger: 'change' },
+    {
+      validator: (_rule, value: number, callback) => {
+        if (!Number.isInteger(value) || value < 1 || value > 10000) {
+          callback(new Error('倍率除数必须是 1～10000 的整数'));
+        } else callback();
+      },
+      trigger: 'change',
+    },
+  ],
   account_ids: [
     {
       validator: (_rule, value: string[], callback) => {
@@ -192,6 +218,7 @@ watch(visible, (open) => {
           url: props.config.url,
           token: '',
           account_ids: [...props.config.account_ids],
+          multiplier_divisor: props.config.multiplier_divisor,
           enabled: props.config.enabled,
         }
       : createForm(),
@@ -206,6 +233,7 @@ const submit = async () => {
     name: form.name.trim(),
     url: form.url.trim(),
     account_ids: [...form.account_ids],
+    multiplier_divisor: form.multiplier_divisor,
     enabled: form.enabled,
   };
   if (editing.value) {

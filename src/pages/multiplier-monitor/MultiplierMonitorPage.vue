@@ -50,6 +50,13 @@
           <span>{{ accountSummary(row.account_ids) }}</span>
         </template>
       </el-table-column>
+      <el-table-column
+        column-key="multiplierDivisor"
+        label="倍率换算"
+        :width="columnWidth('multiplierDivisor', 105)"
+      >
+        <template #default="{ row }">返回值 ÷{{ row.multiplier_divisor }}</template>
+      </el-table-column>
       <el-table-column column-key="enabled" label="状态" :width="columnWidth('enabled', 90)">
         <template #default="{ row }">
           <el-switch
