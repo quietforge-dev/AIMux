@@ -105,6 +105,7 @@
       v-model:visible="formVisible"
       :config="editingConfig"
       :options="accountOptions"
+      :used-account-ids="usedAccountIds"
       :saving="saving"
       @save="save"
     />
@@ -113,7 +114,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
   multiplierMonitorApi,
@@ -139,6 +140,13 @@ const logVisible = ref(false);
 const logConfig = ref<MultiplierMonitorConfig>();
 const checkingIds = ref(new Set<string>());
 const togglingIds = ref(new Set<string>());
+const usedAccountIds = computed(() => [
+  ...new Set(
+    items.value
+      .filter((config) => config.id !== editingConfig.value?.id)
+      .flatMap((config) => config.account_ids),
+  ),
+]);
 
 const load = async () => {
   loading.value = true;

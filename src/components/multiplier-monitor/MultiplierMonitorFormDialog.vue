@@ -54,7 +54,10 @@
             </template>
           </el-transfer>
           <div class="transfer-summary">
-            共 {{ options.length }} 个账号，已选择 {{ form.account_ids.length }} 个
+            可选 {{ transferOptions.length }} 个账号，已选择 {{ form.account_ids.length }} 个
+            <span v-if="excludedAccountCount"
+              >，已排除其他配置中的 {{ excludedAccountCount }} 个</span
+            >
           </div>
         </div>
       </el-form-item>
@@ -93,6 +96,7 @@ const visible = defineModel<boolean>('visible', { required: true });
 const props = defineProps<{
   config?: MultiplierMonitorConfig;
   options: MultiplierMonitorAccountOption[];
+  usedAccountIds: string[];
   saving: boolean;
 }>();
 const emit = defineEmits<{
@@ -109,12 +113,21 @@ const createForm = (): FormModel => ({
   enabled: true,
 });
 const form = reactive<FormModel>(createForm());
+const usedAccountIdSet = computed(() => new Set(props.usedAccountIds));
+const currentAccountIdSet = computed(() => new Set(props.config?.account_ids ?? []));
+const availableOptions = computed(() =>
+  props.options.filter(
+    (account) =>
+      !usedAccountIdSet.value.has(account.id) || currentAccountIdSet.value.has(account.id),
+  ),
+);
+const excludedAccountCount = computed(() => props.options.length - availableOptions.value.length);
 
 const transferOptions = computed<TransferOption[]>(() =>
   [
-    ...props.options,
+    ...availableOptions.value,
     ...(props.config?.account_ids ?? [])
-      .filter((id) => !props.options.some((account) => account.id === id))
+      .filter((id) => !availableOptions.value.some((account) => account.id === id))
       .map((id): MultiplierMonitorAccountOption => ({
         id,
         name: '账号已删除',
