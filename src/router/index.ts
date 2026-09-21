@@ -5,6 +5,7 @@ import ModelsPage from '../pages/models/ModelsPage.vue';
 import UsagePage from '../pages/usage/UsagePage.vue';
 import StatisticsPage from '../pages/statistics/StatisticsPage.vue';
 import MonitorPage from '../pages/monitor/MonitorPage.vue';
+import MultiplierMonitorPage from '../pages/multiplier-monitor/MultiplierMonitorPage.vue';
 import SettingsPage from '../pages/settings/SettingsPage.vue';
 
 export default createRouter({
@@ -20,6 +21,7 @@ export default createRouter({
         { path: 'usage', component: UsagePage },
         { path: 'statistics', component: StatisticsPage },
         { path: 'monitor', component: MonitorPage },
+        { path: 'multiplier-monitor', component: MultiplierMonitorPage },
         { path: 'settings', component: SettingsPage },
       ],
     },

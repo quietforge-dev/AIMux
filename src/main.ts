@@ -37,7 +37,7 @@ const bindCloseHandler = () => {
       handling = true;
       try {
         await ElMessageBox.confirm(
-          '直接退出会停止网关和账号监控。选择最小化后，AIMux 将继续在系统托盘运行。',
+          '直接退出会停止网关、账号监控和倍率监控。选择最小化后，AIMux 将继续在系统托盘运行。',
           '关闭 AIMux',
           {
             confirmButtonText: '直接退出',

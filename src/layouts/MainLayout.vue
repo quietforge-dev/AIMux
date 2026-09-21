@@ -18,6 +18,9 @@
         <el-menu-item index="/monitor"
           ><el-icon><Monitor /></el-icon>监控管理</el-menu-item
         >
+        <el-menu-item index="/multiplier-monitor"
+          ><el-icon><TrendCharts /></el-icon>倍率监控</el-menu-item
+        >
         <el-menu-item index="/settings"
           ><el-icon><Setting /></el-icon>设置</el-menu-item
         >
@@ -68,7 +71,15 @@ import { computed, onMounted, onUnmounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { invoke } from '@tauri-apps/api/core';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { DataAnalysis, Grid, Monitor, Setting, Tickets, User } from '@element-plus/icons-vue';
+import {
+  DataAnalysis,
+  Grid,
+  Monitor,
+  Setting,
+  Tickets,
+  TrendCharts,
+  User,
+} from '@element-plus/icons-vue';
 import { Github, RefreshCw } from 'lucide-vue-next';
 import { useAppStore } from '../stores/app';
 import AppUpdateDialog from '../components/app/AppUpdateDialog.vue';

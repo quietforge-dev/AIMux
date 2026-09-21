@@ -3,6 +3,7 @@ pub mod anthropic_controller;
 pub mod middleware;
 pub mod model_controller;
 pub mod monitor_controller;
+pub mod multiplier_monitor_controller;
 pub mod openai_controller;
 pub mod settings_controller;
 pub mod statistics_controller;
@@ -31,6 +32,7 @@ pub async fn serve(state: Arc<AppState>) -> Result<(), AppError> {
         .merge(usage_controller::routes())
         .merge(statistics_controller::routes())
         .merge(monitor_controller::routes())
+        .merge(multiplier_monitor_controller::routes())
         .merge(settings_controller::routes())
         .route(
             "/health",

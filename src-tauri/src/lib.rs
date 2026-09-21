@@ -66,6 +66,10 @@ pub fn run() {
     runtime.spawn(async move {
         background::monitor_task::run(monitor_state).await;
     });
+    let multiplier_monitor_state = Arc::clone(&shared);
+    runtime.spawn(async move {
+        background::multiplier_monitor_task::run(multiplier_monitor_state).await;
+    });
     let server_state = Arc::clone(&shared);
     runtime.spawn(async move {
         if let Err(error) = controller::serve(server_state).await {
@@ -163,6 +167,10 @@ pub fn run_gateway() -> Result<(), String> {
     let monitor_state = Arc::clone(&shared);
     runtime.spawn(async move {
         background::monitor_task::run(monitor_state).await;
+    });
+    let multiplier_monitor_state = Arc::clone(&shared);
+    runtime.spawn(async move {
+        background::multiplier_monitor_task::run(multiplier_monitor_state).await;
     });
     runtime
         .block_on(controller::serve(shared))

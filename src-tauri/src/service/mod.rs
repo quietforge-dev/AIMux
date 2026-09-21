@@ -4,6 +4,8 @@ pub mod account_service;
 pub mod gateway_service;
 pub mod model_service;
 pub mod monitor_service;
+pub mod multiplier_monitor_service;
+pub mod multiplier_query;
 pub mod scheduler_service;
 pub mod settings_service;
 pub mod statistics_service;
