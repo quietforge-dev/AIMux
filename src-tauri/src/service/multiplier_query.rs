@@ -2,7 +2,7 @@ use std::{fmt, time::Duration};
 
 use futures_util::StreamExt;
 use reqwest::{
-    header::{ACCEPT, AUTHORIZATION},
+    header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE},
     redirect::Policy,
     Client, Response, Url,
 };
@@ -29,6 +29,12 @@ pub struct MultiplierQueryError {
     pub code: String,
     pub message: String,
     pub http_status: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefreshedTokens {
+    pub access_token: String,
+    pub refresh_token: String,
 }
 
 impl MultiplierQueryError {
@@ -60,7 +66,7 @@ impl std::error::Error for MultiplierQueryError {}
 #[derive(Debug, Deserialize)]
 struct RootResponse {
     code: Option<i64>,
-    data: PageData,
+    data: Option<PageData>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -81,6 +87,18 @@ struct RemoteItem {
 #[derive(Debug, Deserialize)]
 struct RemoteGroup {
     rate_multiplier: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RefreshResponse {
+    code: Option<i64>,
+    data: Option<RefreshData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RefreshData {
+    access_token: Option<String>,
+    refresh_token: Option<String>,
 }
 
 struct ParsedPage {
@@ -112,7 +130,10 @@ pub async fn fetch_all(
             ));
         }
         let response = http
-            .get(with_page_query(&base_url, page))
+            .get(with_page_query(
+                &endpoint_url(&base_url, "/api/v1/keys", false),
+                page,
+            ))
             .header(AUTHORIZATION, &authorization)
             .header(ACCEPT, "application/json")
             .send()
@@ -125,10 +146,15 @@ pub async fn fetch_all(
             })?;
         let status = response.status();
         if !status.is_success() {
+            let status_code = status.as_u16();
             return Err(MultiplierQueryError::with_status(
-                "http_error",
-                format!("倍率查询接口返回 HTTP {}", status.as_u16()),
-                status.as_u16(),
+                if status_code == 401 {
+                    "unauthorized"
+                } else {
+                    "http_error"
+                },
+                format!("倍率查询接口返回 HTTP {status_code}"),
+                status_code,
             ));
         }
         let bytes = read_limited(response, MAX_PAGE_RESPONSE_BYTES).await?;
@@ -177,8 +203,99 @@ pub async fn fetch_all(
     Ok(result)
 }
 
+pub async fn refresh_tokens(
+    raw_url: &str,
+    raw_refresh_token: &str,
+    settings: &Settings,
+) -> Result<RefreshedTokens, MultiplierQueryError> {
+    let base_url = validated_url(raw_url)?;
+    let refresh_token = raw_refresh_token.trim();
+    if refresh_token.is_empty() {
+        return Err(MultiplierQueryError::new(
+            "empty_refresh_token",
+            "refresh token 不能为空",
+        ));
+    }
+    let http = build_client(settings)?;
+    let response = http
+        .post(endpoint_url(&base_url, "/api/v1/auth/refresh", true))
+        .header(ACCEPT, "application/json")
+        .header(CONTENT_TYPE, "application/json")
+        .json(&serde_json::json!({ "refresh_token": refresh_token }))
+        .send()
+        .await
+        .map_err(|_| {
+            MultiplierQueryError::new(
+                "refresh_request_failed",
+                "刷新倍率查询 token 请求失败，请检查地址、网络、代理或 TLS 配置",
+            )
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        let status_code = status.as_u16();
+        return Err(MultiplierQueryError::with_status(
+            if status_code == 401 {
+                "refresh_unauthorized"
+            } else {
+                "refresh_http_error"
+            },
+            format!("刷新 token 接口返回 HTTP {status_code}"),
+            status_code,
+        ));
+    }
+    let bytes = read_limited(response, MAX_PAGE_RESPONSE_BYTES).await?;
+    let root: RefreshResponse = serde_json::from_slice(&bytes).map_err(|_| {
+        MultiplierQueryError::new("refresh_invalid_json", "刷新 token 接口返回的不是有效 JSON")
+    })?;
+    if root.code.is_some_and(|code| !matches!(code, 0 | 200)) {
+        return Err(MultiplierQueryError::new(
+            "refresh_business_error",
+            format!(
+                "刷新 token 业务失败，code={}",
+                root.code.unwrap_or_default()
+            ),
+        ));
+    }
+    let Some(data) = root.data else {
+        return Err(MultiplierQueryError::new(
+            "refresh_invalid_response",
+            "刷新 token 响应缺少 data",
+        ));
+    };
+    let access_token = normalize_access_token(data.access_token.as_deref()).ok_or_else(|| {
+        MultiplierQueryError::new(
+            "refresh_invalid_response",
+            "刷新 token 响应缺少 access_token",
+        )
+    })?;
+    let refresh_token = data
+        .refresh_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            MultiplierQueryError::new(
+                "refresh_invalid_response",
+                "刷新 token 响应缺少 refresh_token",
+            )
+        })?;
+    Ok(RefreshedTokens {
+        access_token,
+        refresh_token,
+    })
+}
+
 pub fn validate_url(raw_url: &str) -> Result<(), MultiplierQueryError> {
     validated_url(raw_url).map(|_| ())
+}
+
+pub fn normalize_base_url(raw_url: &str) -> Result<String, MultiplierQueryError> {
+    let mut url = validated_url(raw_url)?;
+    url.set_path("");
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.to_string().trim_end_matches('/').to_owned())
 }
 
 fn validated_url(raw_url: &str) -> Result<Url, MultiplierQueryError> {
@@ -195,6 +312,12 @@ fn validated_url(raw_url: &str) -> Result<Url, MultiplierQueryError> {
         return Err(MultiplierQueryError::new(
             "url_contains_credentials",
             "倍率查询 URL 不能包含用户名或密码",
+        ));
+    }
+    if url.fragment().is_some() {
+        return Err(MultiplierQueryError::new(
+            "url_contains_fragment",
+            "倍率查询 URL 不能包含 fragment",
         ));
     }
     let sensitive_query_names = ["token", "access_token", "api_key", "authorization"];
@@ -228,6 +351,21 @@ fn authorization_value(raw_token: &str) -> Result<String, MultiplierQueryError> 
     } else {
         format!("Bearer {token}")
     })
+}
+
+fn normalize_access_token(raw_token: Option<&str>) -> Option<String> {
+    let token = raw_token?.trim();
+    if token.is_empty() {
+        return None;
+    }
+    Some(
+        token
+            .get(7..)
+            .filter(|_| token[..7].eq_ignore_ascii_case("Bearer "))
+            .unwrap_or(token)
+            .trim()
+            .to_owned(),
+    )
 }
 
 fn build_client(settings: &Settings) -> Result<Client, MultiplierQueryError> {
@@ -270,6 +408,16 @@ fn with_page_query(base_url: &Url, page: usize) -> Url {
     url
 }
 
+fn endpoint_url(base_url: &Url, path: &str, clear_query: bool) -> Url {
+    let mut url = base_url.clone();
+    url.set_path(path);
+    url.set_fragment(None);
+    if clear_query {
+        url.set_query(None);
+    }
+    url
+}
+
 async fn read_limited(response: Response, limit: usize) -> Result<Vec<u8>, MultiplierQueryError> {
     if response
         .content_length()
@@ -306,20 +454,27 @@ fn parse_page(bytes: &[u8], requested_page: usize) -> Result<ParsedPage, Multipl
         MultiplierQueryError::new("invalid_json", "倍率查询接口返回的不是有效 JSON")
     })?;
     if root.code.is_some_and(|code| !matches!(code, 0 | 200)) {
-        return Err(MultiplierQueryError::new(
-            "business_error",
-            format!("倍率查询业务失败，code={}", root.code.unwrap_or_default()),
-        ));
+        let code = root.code.unwrap_or_default();
+        return Err(if code == 401 {
+            MultiplierQueryError::with_status("unauthorized", "倍率查询业务返回 401", 401)
+        } else {
+            MultiplierQueryError::new("business_error", format!("倍率查询业务失败，code={code}"))
+        });
     }
-    if root.data.page != requested_page || root.data.page_size != PAGE_SIZE {
+    let Some(data) = root.data else {
+        return Err(MultiplierQueryError::new(
+            "invalid_response",
+            "倍率查询接口返回缺少 data",
+        ));
+    };
+    if data.page != requested_page || data.page_size != PAGE_SIZE {
         return Err(MultiplierQueryError::new(
             "pagination_mismatch",
             "倍率查询分页信息不一致",
         ));
     }
-    let raw_item_count = root.data.items.len();
-    let items = root
-        .data
+    let raw_item_count = data.items.len();
+    let items = data
         .items
         .into_iter()
         .filter_map(|item| {
@@ -339,8 +494,8 @@ fn parse_page(bytes: &[u8], requested_page: usize) -> Result<ParsedPage, Multipl
     Ok(ParsedPage {
         items,
         raw_item_count,
-        total: root.data.total,
-        pages: root.data.pages,
+        total: data.total,
+        pages: data.pages,
     })
 }
 
@@ -362,7 +517,10 @@ fn extract_rate(value: Option<Value>) -> (Option<String>, Option<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{authorization_value, parse_page, with_page_query, PAGE_SIZE};
+    use super::{
+        authorization_value, endpoint_url, normalize_access_token, normalize_base_url, parse_page,
+        with_page_query, PAGE_SIZE,
+    };
     use reqwest::Url;
 
     #[test]
@@ -393,5 +551,45 @@ mod tests {
         let page = parse_page(body, 1).unwrap();
         assert_eq!(page.items[0].key, "sk-test");
         assert_eq!(page.items[0].rate_multiplier.as_deref(), Some("0.3"));
+    }
+
+    #[test]
+    fn normalizes_domain_and_discards_legacy_path() {
+        assert_eq!(
+            normalize_base_url("https://example.com/api/v1/keys/").unwrap(),
+            "https://example.com"
+        );
+    }
+
+    #[test]
+    fn builds_fixed_api_endpoints_from_legacy_or_domain_url() {
+        let base = reqwest::Url::parse("https://example.com/old/path?tenant=a").unwrap();
+        assert_eq!(
+            endpoint_url(&base, "/api/v1/keys", false).as_str(),
+            "https://example.com/api/v1/keys?tenant=a"
+        );
+        assert_eq!(
+            endpoint_url(&base, "/api/v1/auth/refresh", true).as_str(),
+            "https://example.com/api/v1/auth/refresh"
+        );
+    }
+
+    #[test]
+    fn recognizes_business_unauthorized_response_without_data() {
+        let error = match parse_page(br#"{"code":401,"message":"unauthorized"}"#, 1) {
+            Ok(_) => panic!("expected unauthorized error"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, "unauthorized");
+        assert_eq!(error.http_status, Some(401));
+    }
+
+    #[test]
+    fn strips_bearer_prefix_from_refreshed_access_token() {
+        assert_eq!(
+            normalize_access_token(Some("Bearer access-token")).as_deref(),
+            Some("access-token")
+        );
+        assert_eq!(normalize_access_token(Some("  ")), None);
     }
 }

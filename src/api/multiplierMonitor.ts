@@ -19,6 +19,7 @@ export type MultiplierMonitorConfig = {
   multiplier_divisor: number;
   enabled: boolean;
   has_token: boolean;
+  has_refresh_token: boolean;
   last_started_at?: string | null;
   last_finished_at?: string | null;
   running: boolean;
@@ -39,13 +40,15 @@ export type MultiplierMonitorCreate = {
   name: string;
   url: string;
   token: string;
+  refresh_token: string;
   account_ids: string[];
   multiplier_divisor: number;
   enabled: boolean;
 };
 
-export type MultiplierMonitorUpdate = Omit<MultiplierMonitorCreate, 'token'> & {
+export type MultiplierMonitorUpdate = Omit<MultiplierMonitorCreate, 'token' | 'refresh_token'> & {
   token?: string;
+  refresh_token?: string;
 };
 
 export type MultiplierMonitorCheckResult = {

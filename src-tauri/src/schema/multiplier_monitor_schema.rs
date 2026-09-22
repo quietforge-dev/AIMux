@@ -5,6 +5,8 @@ pub struct MultiplierMonitorCreate {
     pub name: String,
     pub url: String,
     pub token: String,
+    #[serde(default)]
+    pub refresh_token: String,
     pub account_ids: Vec<String>,
     #[serde(default = "default_multiplier_divisor")]
     pub multiplier_divisor: i64,
@@ -17,6 +19,7 @@ pub struct MultiplierMonitorUpdate {
     pub name: String,
     pub url: String,
     pub token: Option<String>,
+    pub refresh_token: Option<String>,
     pub account_ids: Vec<String>,
     pub multiplier_divisor: Option<i64>,
     pub enabled: bool,
@@ -39,6 +42,7 @@ pub struct MultiplierMonitorConfigView {
     pub multiplier_divisor: i64,
     pub enabled: bool,
     pub has_token: bool,
+    pub has_refresh_token: bool,
     pub last_started_at: Option<String>,
     pub last_finished_at: Option<String>,
     pub running: bool,

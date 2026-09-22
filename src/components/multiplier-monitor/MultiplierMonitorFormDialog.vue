@@ -10,12 +10,8 @@
       <el-form-item label="配置名称" prop="name">
         <el-input v-model="form.name" maxlength="100" placeholder="例如：主站倍率同步" />
       </el-form-item>
-      <el-form-item label="查询 URL" prop="url">
-        <el-input
-          v-model="form.url"
-          placeholder="https://example.com/api/keys"
-          autocomplete="off"
-        />
+      <el-form-item label="站点域名" prop="url">
+        <el-input v-model="form.url" placeholder="https://example.com" autocomplete="off" />
       </el-form-item>
       <el-form-item label="查询 Token" prop="token">
         <el-input
@@ -26,6 +22,20 @@
           :placeholder="editing ? '留空表示保留原 Token' : '请输入接口访问 Token'"
         />
         <div class="field-hint">可以填写裸 Token 或 Bearer Token，保存后不会回显明文。</div>
+      </el-form-item>
+      <el-form-item label="刷新 Token" prop="refresh_token">
+        <el-input
+          v-model="form.refresh_token"
+          type="password"
+          show-password
+          autocomplete="new-password"
+          :placeholder="
+            editing ? '留空表示保留原刷新 Token' : '可选，用于 access token 过期后自动刷新'
+          "
+        />
+        <div class="field-hint">
+          返回 401 时自动调用 /api/v1/auth/refresh，刷新成功后会同时更新两个 Token。
+        </div>
       </el-form-item>
       <el-form-item label="倍率除数" prop="multiplier_divisor">
         <el-input-number
@@ -101,6 +111,7 @@ type FormModel = {
   name: string;
   url: string;
   token: string;
+  refresh_token: string;
   account_ids: string[];
   multiplier_divisor: number;
   enabled: boolean;
@@ -123,6 +134,7 @@ const createForm = (): FormModel => ({
   name: '',
   url: '',
   token: '',
+  refresh_token: '',
   account_ids: [],
   multiplier_divisor: 1,
   enabled: true,
@@ -217,6 +229,7 @@ watch(visible, (open) => {
           name: props.config.name,
           url: props.config.url,
           token: '',
+          refresh_token: '',
           account_ids: [...props.config.account_ids],
           multiplier_divisor: props.config.multiplier_divisor,
           enabled: props.config.enabled,
@@ -237,9 +250,13 @@ const submit = async () => {
     enabled: form.enabled,
   };
   if (editing.value) {
-    emit('save', { ...common, token: form.token.trim() || undefined });
+    emit('save', {
+      ...common,
+      token: form.token.trim() || undefined,
+      refresh_token: form.refresh_token.trim() || undefined,
+    });
   } else {
-    emit('save', { ...common, token: form.token.trim() });
+    emit('save', { ...common, token: form.token.trim(), refresh_token: form.refresh_token.trim() });
   }
 };
 </script>

@@ -7,6 +7,7 @@ pub struct MultiplierMonitorConfig {
     pub name: String,
     pub url: String,
     pub token: String,
+    pub refresh_token: String,
     pub account_ids: String,
     pub multiplier_divisor: i64,
     pub enabled: bool,

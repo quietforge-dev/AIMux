@@ -61,6 +61,7 @@ pub async fn create(
     let name = validate_name(&payload.name)?;
     let url = validate_url(&payload.url)?;
     let token = normalize_token(&payload.token)?;
+    let refresh_token = normalize_refresh_token(&payload.refresh_token)?;
     let multiplier_divisor = validate_multiplier_divisor(payload.multiplier_divisor)?;
     let account_ids = normalize_account_ids(payload.account_ids)?;
     validate_accounts(pool, &account_ids).await?;
@@ -72,6 +73,7 @@ pub async fn create(
         &name,
         &url,
         &token,
+        &refresh_token,
         &account_ids_json,
         multiplier_divisor,
         payload.enabled,
@@ -95,6 +97,10 @@ pub async fn update(
         None | Some("") => current.token.clone(),
         Some(value) => normalize_token(value)?,
     };
+    let refresh_token = match payload.refresh_token.as_deref().map(str::trim) {
+        None | Some("") => current.refresh_token.clone(),
+        Some(value) => normalize_refresh_token(value)?,
+    };
     let multiplier_divisor = validate_multiplier_divisor(
         payload
             .multiplier_divisor
@@ -107,6 +113,7 @@ pub async fn update(
         .map_err(|error| AppError::Internal(error.to_string()))?;
     let reset_schedule = current.url != url
         || current.token != token
+        || current.refresh_token != refresh_token
         || current.account_ids != account_ids_json
         || current.multiplier_divisor != multiplier_divisor;
     let config = multiplier_monitor_dao::update_config(
@@ -115,6 +122,7 @@ pub async fn update(
         &name,
         &url,
         &token,
+        &refresh_token,
         &account_ids_json,
         multiplier_divisor,
         payload.enabled,
@@ -212,15 +220,22 @@ async fn run_claimed(
         .clone()
         .unwrap_or_else(utc_now_string);
     let started = std::time::Instant::now();
+    let mut config = config;
     let query = tokio::time::timeout(
         QUERY_TOTAL_TIMEOUT,
-        multiplier_query::fetch_all(&config.url, &config.token, settings),
+        fetch_with_refresh(pool, settings, &mut config, owner),
     )
     .await;
     let remote = match query {
         Ok(Ok(items)) => items,
-        Ok(Err(error)) => {
+        Ok(Err(FetchRunError::Query(error))) => {
             return finish_query_failure(pool, &config, owner, &started_at, started, error).await;
+        }
+        Ok(Err(FetchRunError::App(error))) => {
+            let _ =
+                multiplier_monitor_dao::release_config(pool, &config.id, owner, &utc_now_string())
+                    .await;
+            return Err(error);
         }
         Err(_) => {
             return finish_query_failure(
@@ -416,6 +431,60 @@ async fn run_claimed(
     }
 }
 
+enum FetchRunError {
+    Query(MultiplierQueryError),
+    App(AppError),
+}
+
+async fn fetch_with_refresh(
+    pool: &SqlitePool,
+    settings: &Settings,
+    config: &mut MultiplierMonitorConfig,
+    owner: &str,
+) -> Result<Vec<RemoteMultiplier>, FetchRunError> {
+    let first = multiplier_query::fetch_all(&config.url, &config.token, settings).await;
+    let error = match first {
+        Ok(items) => return Ok(items),
+        Err(error) => error,
+    };
+    if error.http_status != Some(401) {
+        return Err(FetchRunError::Query(error));
+    }
+    if config.refresh_token.trim().is_empty() {
+        return Err(FetchRunError::Query(MultiplierQueryError {
+            code: "unauthorized_no_refresh_token".into(),
+            message: "倍率查询接口返回 401，但未配置 refresh token".into(),
+            http_status: Some(401),
+        }));
+    }
+    let refreshed = multiplier_query::refresh_tokens(&config.url, &config.refresh_token, settings)
+        .await
+        .map_err(FetchRunError::Query)?;
+    let updated = multiplier_monitor_dao::update_tokens_if_current(
+        pool,
+        &config.id,
+        owner,
+        &config.updated_at,
+        &refreshed.access_token,
+        &refreshed.refresh_token,
+        &utc_now_string(),
+    )
+    .await
+    .map_err(FetchRunError::App)?;
+    let Some(updated) = updated else {
+        return Err(FetchRunError::Query(MultiplierQueryError {
+            code: "config_changed".into(),
+            message: "刷新 token 期间配置已编辑或停用，本轮未更新账号倍率".into(),
+            http_status: None,
+        }));
+    };
+    *config = updated;
+    tracing::info!(config_id = %config.id, "倍率监控 token 已自动刷新");
+    multiplier_query::fetch_all(&config.url, &config.token, settings)
+        .await
+        .map_err(FetchRunError::Query)
+}
+
 async fn finish_query_failure(
     pool: &SqlitePool,
     config: &MultiplierMonitorConfig,
@@ -588,6 +657,7 @@ async fn to_view(
         multiplier_divisor: config.multiplier_divisor,
         enabled: config.enabled,
         has_token: !config.token.is_empty(),
+        has_refresh_token: !config.refresh_token.is_empty(),
         last_started_at: config.last_started_at,
         last_finished_at: config.last_finished_at,
         running: config
@@ -622,8 +692,7 @@ fn validate_name(value: &str) -> Result<String, AppError> {
 
 fn validate_url(value: &str) -> Result<String, AppError> {
     let value = value.trim();
-    multiplier_query::validate_url(value).map_err(|error| AppError::BadRequest(error.message))?;
-    Ok(value.into())
+    multiplier_query::normalize_base_url(value).map_err(|error| AppError::BadRequest(error.message))
 }
 
 fn normalize_token(value: &str) -> Result<String, AppError> {
@@ -637,6 +706,10 @@ fn normalize_token(value: &str) -> Result<String, AppError> {
         return Err(AppError::BadRequest("查询 token 不能为空".into()));
     }
     Ok(value.into())
+}
+
+fn normalize_refresh_token(value: &str) -> Result<String, AppError> {
+    Ok(value.trim().into())
 }
 
 fn validate_multiplier_divisor(value: i64) -> Result<i64, AppError> {

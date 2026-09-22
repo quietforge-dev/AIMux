@@ -57,6 +57,17 @@
       >
         <template #default="{ row }">返回值 ÷{{ row.multiplier_divisor }}</template>
       </el-table-column>
+      <el-table-column
+        column-key="refreshToken"
+        label="自动刷新"
+        :width="columnWidth('refreshToken', 105)"
+      >
+        <template #default="{ row }">
+          <el-tag :type="row.has_refresh_token ? 'success' : 'info'" size="small">
+            {{ row.has_refresh_token ? '已配置' : '未配置' }}
+          </el-tag>
+        </template>
+      </el-table-column>
       <el-table-column column-key="enabled" label="状态" :width="columnWidth('enabled', 90)">
         <template #default="{ row }">
           <el-switch

@@ -43,17 +43,19 @@ pub async fn create_config(
     name: &str,
     url: &str,
     token: &str,
+    refresh_token: &str,
     account_ids: &str,
     multiplier_divisor: i64,
     enabled: bool,
     now: &str,
 ) -> Result<MultiplierMonitorConfig, AppError> {
     let id = Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO multiplier_monitor_configs(id,name,url,token,account_ids,multiplier_divisor,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)")
+    sqlx::query("INSERT INTO multiplier_monitor_configs(id,name,url,token,refresh_token,account_ids,multiplier_divisor,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
         .bind(&id)
         .bind(name)
         .bind(url)
-        .bind(token)
+    .bind(token)
+        .bind(refresh_token)
         .bind(account_ids)
         .bind(multiplier_divisor)
         .bind(enabled)
@@ -73,6 +75,7 @@ pub async fn update_config(
     name: &str,
     url: &str,
     token: &str,
+    refresh_token: &str,
     account_ids: &str,
     multiplier_divisor: i64,
     enabled: bool,
@@ -80,17 +83,44 @@ pub async fn update_config(
     now: &str,
 ) -> Result<Option<MultiplierMonitorConfig>, AppError> {
     let result = sqlx::query(
-        "UPDATE multiplier_monitor_configs SET name=?,url=?,token=?,account_ids=?,multiplier_divisor=?,enabled=?,last_started_at=CASE WHEN ? THEN NULL ELSE last_started_at END,updated_at=? WHERE id=?",
+        "UPDATE multiplier_monitor_configs SET name=?,url=?,token=?,refresh_token=?,account_ids=?,multiplier_divisor=?,enabled=?,last_started_at=CASE WHEN ? THEN NULL ELSE last_started_at END,updated_at=? WHERE id=?",
     )
     .bind(name)
     .bind(url)
     .bind(token)
+    .bind(refresh_token)
     .bind(account_ids)
     .bind(multiplier_divisor)
     .bind(enabled)
     .bind(reset_schedule)
     .bind(now)
     .bind(id)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Ok(None);
+    }
+    get_config(pool, id).await
+}
+
+pub async fn update_tokens_if_current(
+    pool: &SqlitePool,
+    id: &str,
+    owner: &str,
+    expected_updated_at: &str,
+    token: &str,
+    refresh_token: &str,
+    now: &str,
+) -> Result<Option<MultiplierMonitorConfig>, AppError> {
+    let result = sqlx::query(
+        "UPDATE multiplier_monitor_configs SET token=?,refresh_token=?,updated_at=? WHERE id=? AND lease_owner=? AND updated_at=? AND enabled=1",
+    )
+    .bind(token)
+    .bind(refresh_token)
+    .bind(now)
+    .bind(id)
+    .bind(owner)
+    .bind(expected_updated_at)
     .execute(pool)
     .await?;
     if result.rows_affected() == 0 {
