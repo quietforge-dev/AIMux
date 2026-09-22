@@ -576,7 +576,7 @@ watch(
 
 .model-picker {
   width: 100%;
-  max-height: 105px;
+  max-height: 180px;
   overflow-y: auto;
   padding: 6px 12px;
   border: 1px solid var(--el-border-color);
