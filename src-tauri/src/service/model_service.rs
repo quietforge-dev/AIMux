@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 const DEFAULTS: [(&str, &str, &str); 7] = [
     ("openai", "openai", "gpt-5.6-sol"),
     ("openai", "openai", "gpt-6-astra"),
-    ("openai", "openai", "gpt-6-sol"),
+    ("openai", "openai", "gpt-6.1-sol"),
     ("openai", "openai", "gpt-6-luna"),
     ("anthropic", "anthropic", "claude-sonnet-5-5"),
     ("anthropic", "anthropic", "claude-fable-5-1"),
