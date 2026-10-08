@@ -3,7 +3,8 @@ use crate::{
     dao::account_dao,
     error::AppError,
     schema::account_schema::{
-        AccountCreate, AccountUpdate, DiscoverModelsRequest, DiscoverModelsResponse, TestRequest,
+        AccountCreate, AccountStatusRequest, AccountUpdate, DiscoverModelsRequest,
+        DiscoverModelsResponse, TestRequest,
     },
     service::{account_model_discovery_service, account_probe_service, account_service},
     upstream::error::response_body,
@@ -35,6 +36,7 @@ pub fn routes() -> Router<Arc<AppState>> {
             get(get_one).put(update).delete(remove),
         )
         .route("/api/accounts/{id}/toggle-status", post(toggle))
+        .route("/api/accounts/{id}/set-status", post(set_status))
         .route("/api/accounts/{id}/adjust-priority", post(adjust))
         .route("/api/accounts/{id}/test", post(test))
         .route("/api/accounts/discover-models", post(discover_models))
@@ -116,6 +118,18 @@ async fn toggle(
         .await?
         .ok_or_else(|| AppError::NotFound("账号不存在".into()))?;
     Ok(Json(serde_json::to_value(account_dao::to_view(a)).unwrap()))
+}
+async fn set_status(
+    State(s): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(p): Json<AccountStatusRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let account = account_dao::set_status(&s.pool, &id, &p.status, p.duration_hours)
+        .await?
+        .ok_or_else(|| AppError::NotFound("账号不存在".into()))?;
+    Ok(Json(
+        serde_json::to_value(account_dao::to_view(account)).unwrap(),
+    ))
 }
 async fn adjust(
     State(s): State<Arc<AppState>>,

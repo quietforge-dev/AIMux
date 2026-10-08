@@ -8,6 +8,10 @@ pub fn utc_now_string() -> String {
     utc_datetime_string(Utc::now())
 }
 
+pub fn unix_now_millis() -> i64 {
+    Utc::now().timestamp_millis()
+}
+
 pub fn utc_datetime_string(value: DateTime<Utc>) -> String {
     value.format(DATABASE_TIMESTAMP_FORMAT).to_string()
 }

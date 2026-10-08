@@ -83,7 +83,7 @@
       >
         <template #default="{ row }">
           <el-button link :type="row.status === 'active' ? 'success' : 'info'" @click="toggle(row)">
-            {{ row.status === 'active' ? '启用' : '禁用' }}
+            {{ statusLabel(row) }}
           </el-button>
         </template>
       </el-table-column>
@@ -150,6 +150,23 @@
       </el-table-column>
     </el-table>
 
+    <el-dialog v-model="disableDialog" title="禁用账号" width="420px" destroy-on-close>
+      <el-form label-width="90px">
+        <el-form-item label="禁用时长">
+          <el-select v-model="disableDuration" style="width: 100%">
+            <el-option label="永久禁用" value="permanent" />
+            <el-option label="1 小时" value="1" />
+            <el-option label="3 小时" value="3" />
+            <el-option label="12 小时" value="12" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="disableDialog = false">取消</el-button>
+        <el-button type="primary" :loading="statusSaving" @click="confirmDisable">确定</el-button>
+      </template>
+    </el-dialog>
+
     <AccountFormDialog
       v-model="dialog"
       :account="editingAccount"
@@ -210,6 +227,10 @@ const testAccount = ref<Account>();
 const statusFilter = ref<'all' | Account['status']>('active');
 const nameFilter = ref('');
 const typeFilter = ref<Account['type']>();
+const disableDialog = ref(false);
+const disableDuration = ref<'permanent' | '1' | '3' | '12'>('permanent');
+const statusSaving = ref(false);
+const disablingAccount = ref<Account>();
 const modelProviders = computed(
   () =>
     new Map<string, string>(
@@ -414,8 +435,46 @@ const save = async (payload: Record<string, unknown>) => {
 };
 
 const toggle = async (row: Account) => {
-  await accountsApi.toggle(row.id);
-  await load();
+  if (row.status === 'active') {
+    disablingAccount.value = row;
+    disableDuration.value = 'permanent';
+    disableDialog.value = true;
+    return;
+  }
+  try {
+    statusSaving.value = true;
+    await accountsApi.setStatus(row.id, 'active');
+    await load();
+    ElMessage.success('账号已启用');
+  } finally {
+    statusSaving.value = false;
+  }
+};
+
+const confirmDisable = async () => {
+  const row = disablingAccount.value;
+  if (!row) return;
+  try {
+    statusSaving.value = true;
+    const duration =
+      disableDuration.value === 'permanent'
+        ? undefined
+        : (Number(disableDuration.value) as 1 | 3 | 12);
+    await accountsApi.setStatus(row.id, 'disabled', duration);
+    disableDialog.value = false;
+    await load();
+    ElMessage.success(duration ? `账号已禁用 ${duration} 小时` : '账号已永久禁用');
+  } catch (error) {
+    ElMessage.error(String(error));
+  } finally {
+    statusSaving.value = false;
+  }
+};
+
+const statusLabel = (row: Account) => {
+  if (row.status === 'active') return '启用';
+  if (row.disabled_until) return `禁用至 ${new Date(row.disabled_until).toLocaleString()}`;
+  return '永久禁用';
 };
 
 const priority = async (row: Account) => {

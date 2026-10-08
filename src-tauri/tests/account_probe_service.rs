@@ -8,6 +8,7 @@ fn account(account_type: &str, model_mappings: Option<&str>) -> Account {
         base_url: "https://example.test".into(),
         api_key_encrypted: "key".into(),
         status: "active".into(),
+        disabled_until: None,
         priority: 5,
         multiplier: 0.10,
         supported_models: None,

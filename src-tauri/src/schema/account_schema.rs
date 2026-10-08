@@ -55,6 +55,8 @@ pub struct AccountView {
     pub base_url: String,
     pub api_key: String,
     pub status: String,
+    /// Unix timestamp in milliseconds; NULL means permanent disable when status is disabled.
+    pub disabled_until: Option<i64>,
     pub priority: i64,
     pub multiplier: f64,
     pub test_default_model: Option<String>,
@@ -71,6 +73,12 @@ pub struct AccountView {
     pub monitor_average_duration_ms: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AccountStatusRequest {
+    pub status: String,
+    pub duration_hours: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, Default)]

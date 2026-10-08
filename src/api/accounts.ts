@@ -6,6 +6,7 @@ export type Account = {
   base_url: string;
   api_key: string;
   status: 'active' | 'disabled';
+  disabled_until?: number | null;
   priority: number;
   multiplier: number;
   monitor_average_duration_ms?: number | null;
@@ -36,6 +37,11 @@ export const accountsApi = {
   update: (id: string, v: unknown) => put<Account>(`/api/accounts/${id}`, v),
   remove: (id: string) => del<void>(`/api/accounts/${id}`),
   toggle: (id: string) => post<Account>(`/api/accounts/${id}/toggle-status`),
+  setStatus: (id: string, status: 'active' | 'disabled', duration_hours?: 1 | 3 | 12) =>
+    post<Account>(`/api/accounts/${id}/set-status`, {
+      status,
+      duration_hours: status === 'disabled' ? (duration_hours ?? null) : null,
+    }),
   priority: (id: string, priority: number) =>
     post<Account>(`/api/accounts/${id}/adjust-priority?priority=${priority}`),
   test: (id: string, model?: string, signal?: AbortSignal) =>

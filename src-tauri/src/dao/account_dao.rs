@@ -6,7 +6,7 @@ use crate::{
     error::AppError,
     model::account::Account,
     schema::account_schema::{AccountCreate, AccountUpdate, AccountView},
-    utils::time::utc_now_string,
+    utils::time::{unix_now_millis, utc_now_string},
 };
 
 pub async fn get(pool: &SqlitePool, id: &str) -> Result<Option<Account>, AppError> {
@@ -26,6 +26,7 @@ pub async fn list(
     status: Option<&str>,
     name: Option<&str>,
 ) -> Result<(Vec<Account>, i64), AppError> {
+    expire_disabled(pool).await?;
     let mut sql = String::from("SELECT * FROM accounts WHERE 1=1");
     let mut count = String::from("SELECT COUNT(*) FROM accounts WHERE 1=1");
     if account_type.is_some() {
@@ -70,6 +71,7 @@ pub async fn pick_one(
     model: Option<&str>,
     account_type: &str,
 ) -> Result<Option<Account>, AppError> {
+    expire_disabled(pool).await?;
     let accounts = sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE status='active' AND type=? ORDER BY priority DESC, multiplier ASC, monitor_average_duration_ms IS NULL ASC, monitor_average_duration_ms ASC, lower(name), id").bind(account_type).fetch_all(pool).await?;
     let mut eligible: Vec<Account> = accounts
         .into_iter()
@@ -201,8 +203,55 @@ pub async fn save_priority(pool: &SqlitePool, id: &str, priority: i64) -> Result
     Ok(())
 }
 pub async fn toggle_status(pool: &SqlitePool, id: &str) -> Result<Option<Account>, AppError> {
-    sqlx::query("UPDATE accounts SET status=CASE status WHEN 'active' THEN 'disabled' ELSE 'active' END, updated_at=? WHERE id=?").bind(utc_now_string()).bind(id).execute(pool).await?;
+    let current = get(pool, id).await?;
+    let Some(current) = current else {
+        return Ok(None);
+    };
+    if current.status == "active" {
+        set_status(pool, id, "disabled", None).await
+    } else {
+        set_status(pool, id, "active", None).await
+    }
+}
+
+pub async fn set_status(
+    pool: &SqlitePool,
+    id: &str,
+    status: &str,
+    duration_hours: Option<i64>,
+) -> Result<Option<Account>, AppError> {
+    let disabled_until = match status {
+        "active" => None,
+        "disabled" => match duration_hours {
+            None => None,
+            Some(hours) if matches!(hours, 1 | 3 | 12) => {
+                Some(unix_now_millis() + hours * 60 * 60 * 1000)
+            }
+            Some(_) => {
+                return Err(AppError::BadRequest(
+                    "禁用时长只能是 1、3、12 小时或永久禁用".into(),
+                ))
+            }
+        },
+        _ => return Err(AppError::BadRequest("账号状态不支持".into())),
+    };
+    sqlx::query("UPDATE accounts SET status=?, disabled_until=?, updated_at=? WHERE id=?")
+        .bind(status)
+        .bind(disabled_until)
+        .bind(utc_now_string())
+        .bind(id)
+        .execute(pool)
+        .await?;
     get(pool, id).await
+}
+
+pub async fn expire_disabled(pool: &SqlitePool) -> Result<u64, AppError> {
+    let result = sqlx::query("UPDATE accounts SET status='active', disabled_until=NULL, updated_at=? WHERE status='disabled' AND disabled_until IS NOT NULL AND disabled_until <= ?")
+        .bind(utc_now_string())
+        .bind(unix_now_millis())
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
 }
 pub async fn mark_used(pool: &SqlitePool, id: &str) -> Result<(), AppError> {
     let now = utc_now_string();
@@ -254,6 +303,7 @@ pub fn to_view(a: Account) -> AccountView {
         base_url: a.base_url,
         api_key: a.api_key_encrypted,
         status: a.status,
+        disabled_until: a.disabled_until,
         priority: a.priority,
         multiplier: a.multiplier,
         test_default_model: a.test_default_model,

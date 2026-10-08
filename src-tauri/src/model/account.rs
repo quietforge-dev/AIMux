@@ -9,6 +9,7 @@ pub struct Account {
     pub base_url: String,
     pub api_key_encrypted: String,
     pub status: String,
+    pub disabled_until: Option<i64>,
     pub priority: i64,
     pub multiplier: f64,
     pub supported_models: Option<String>,

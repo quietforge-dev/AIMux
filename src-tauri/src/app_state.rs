@@ -19,6 +19,7 @@ impl AppState {
     pub async fn initialize(settings: Settings) -> Result<Self, AppError> {
         let pool = database::connect(&settings.database_path()).await?;
         crate::service::model_service::seed(&pool).await?;
+        crate::dao::account_dao::expire_disabled(&pool).await?;
         let now = utc_now_string();
         let interrupted = usage_dao::fail_unfinished_streams(&pool, &now).await?;
         if interrupted > 0 {
