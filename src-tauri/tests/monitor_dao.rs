@@ -43,7 +43,7 @@ async fn returns_the_latest_limit_for_each_account() {
         }
     }
     let ids = vec!["account-a".to_owned(), "account-b".to_owned()];
-    let records = list_grouped(&pool, &ids, 2, "2026-08-17T00:00:02Z")
+    let records = list_grouped(&pool, &ids, 2)
         .await
         .expect("读取监控记录失败");
     assert_eq!(records.len(), 4);
@@ -60,6 +60,8 @@ async fn returns_the_latest_limit_for_each_account() {
                     || record.checked_at.ends_with("03Z"))
         );
     }
+    assert_eq!(list_grouped(&pool, &ids, 40).await.unwrap().len(), 6);
+    assert!(list_grouped(&pool, &[], 30).await.unwrap().is_empty());
     pool.close().await;
     let _ = std::fs::remove_file(path);
 }
@@ -102,6 +104,9 @@ async fn stores_the_rolling_average_of_the_latest_thirty_records() {
         .expect("读取账号失败")
         .expect("账号不存在");
     assert_eq!(saved.monitor_average_duration_ms, Some(17));
+    let ids = vec![account.id.clone()];
+    assert_eq!(list_grouped(&pool, &ids, 10).await.unwrap().len(), 10);
+    assert_eq!(list_grouped(&pool, &ids, 40).await.unwrap().len(), 31);
     pool.close().await;
     let _ = std::fs::remove_file(path);
 }

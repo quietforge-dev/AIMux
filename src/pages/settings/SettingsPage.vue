@@ -88,6 +88,8 @@ const form = reactive<Settings>({
   upstream_proxy_enabled: false,
   upstream_proxy_url: 'http://127.0.0.1:7890',
   monitoring_enabled: true,
+  monitoring_interval_minutes: 2,
+  monitoring_recent_count: 30,
   monitoring_start_time: null,
   monitoring_end_time: null,
   local_token: '',

@@ -21,4 +21,6 @@ pub struct MonitoringSettingsUpdate {
     pub monitoring_start_time: Option<String>,
     #[serde(default)]
     pub monitoring_end_time: Option<String>,
+    pub monitoring_interval_minutes: Option<u64>,
+    pub monitoring_recent_count: Option<i64>,
 }

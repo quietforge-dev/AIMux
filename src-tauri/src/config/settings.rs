@@ -14,6 +14,10 @@ pub struct Settings {
     pub upstream_proxy_enabled: bool,
     pub upstream_proxy_url: String,
     pub monitoring_enabled: bool,
+    #[serde(default = "default_monitoring_interval")]
+    pub monitoring_interval_minutes: u64,
+    #[serde(default = "default_monitoring_recent_count")]
+    pub monitoring_recent_count: i64,
     #[serde(default)]
     pub monitoring_start_time: Option<String>,
     #[serde(default)]
@@ -33,12 +37,21 @@ impl Default for Settings {
             upstream_proxy_enabled: false,
             upstream_proxy_url: "http://127.0.0.1:7890".into(),
             monitoring_enabled: true,
+            monitoring_interval_minutes: default_monitoring_interval(),
+            monitoring_recent_count: default_monitoring_recent_count(),
             monitoring_start_time: None,
             monitoring_end_time: None,
             local_token: String::new(),
             launch_at_login: false,
         }
     }
+}
+
+fn default_monitoring_interval() -> u64 {
+    2
+}
+fn default_monitoring_recent_count() -> i64 {
+    30
 }
 
 impl Settings {

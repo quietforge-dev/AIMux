@@ -7,6 +7,7 @@
           v-model="enabled"
           active-text="账号监控"
           :loading="savingEnabled"
+          :disabled="savingRange || savingOptions || loading"
           :before-change="changeEnabled"
         />
         <span class="range-label">监控时段</span>
@@ -17,11 +18,36 @@
           range-separator="至"
           start-placeholder="开始时间"
           end-placeholder="结束时间"
-          :disabled="savingRange"
+          :disabled="savingRange || savingEnabled || savingOptions || loading"
           @change="changeRange"
         />
         <span v-if="enabled && !inWindow" class="window-hint">当前不在监控时段</span>
-        <el-button :loading="loading" @click="load">刷新</el-button>
+        <span class="range-label">检测间隔</span>
+        <el-select
+          v-model="intervalMinutes"
+          class="interval-select"
+          :disabled="savingConfig || loading"
+          @change="changeOptions"
+        >
+          <el-option
+            v-for="minutes in 9"
+            :key="minutes"
+            :label="`${minutes + 1} 分钟`"
+            :value="minutes + 1"
+          />
+        </el-select>
+        <span class="range-label">最近记录数</span>
+        <el-input-number
+          v-model="recentCount"
+          :min="10"
+          :max="40"
+          :precision="0"
+          :step="1"
+          :disabled="savingConfig || loading"
+          @change="changeOptions"
+        />
+        <span v-if="savingOptions" class="range-label">正在保存...</span>
+        <el-button :loading="loading" :disabled="savingConfig" @click="load">刷新</el-button>
         <el-button :disabled="!hasCustomWidths" @click="resetColumnWidths">恢复默认列宽</el-button>
       </div>
     </div>
@@ -88,6 +114,11 @@
         label="平均耗时"
         :width="columnWidth('averageDuration', 90)"
       >
+        <template #header>
+          <el-tooltip content="按最近 30 条有耗时的检测记录计算，不受展示次数影响">
+            <span>平均耗时</span>
+          </el-tooltip>
+        </template>
         <template #default="{ row }">
           <span
             :class="(row.monitor_average_duration_ms ?? 0) > SLOW_THRESHOLD ? 'warning-text' : ''"
@@ -109,7 +140,7 @@
       </el-table-column>
       <el-table-column
         column-key="recentChecks"
-        label="最近30次检测记录"
+        :label="`最近${displayCount}次检测记录`"
         :width="columnWidth('recentChecks')"
         min-width="620"
       >
@@ -140,7 +171,13 @@ import { useTableColumnWidths } from '../../composables/useTableColumnWidths';
 
 const { tableKey, hasCustomWidths, columnWidth, handleColumnResize, resetColumnWidths } =
   useTableColumnWidths('monitor');
-const STATUS_COUNT = 30;
+const intervalMinutes = ref(2);
+const recentCount = ref<number | undefined>(30);
+const displayCount = ref(30);
+const savingOptions = ref(false);
+const savingConfig = computed(
+  () => savingEnabled.value || savingRange.value || savingOptions.value,
+);
 const SLOW_THRESHOLD = 20_000;
 const models = useModelsStore();
 const items = ref<MonitorItem[]>([]);
@@ -158,13 +195,16 @@ const modelProviders = computed(
 let timer: number | undefined;
 
 const load = async () => {
-  if (loading.value) return;
+  if (loading.value || savingConfig.value) return;
   loading.value = true;
   try {
     const [result] = await Promise.all([monitorApi.list(), models.load()]);
     items.value = result.items;
     enabled.value = result.monitoring_enabled;
     timeRange.value = toRange(result.monitoring_start_time, result.monitoring_end_time);
+    intervalMinutes.value = result.monitoring_interval_minutes;
+    recentCount.value = result.monitoring_recent_count;
+    displayCount.value = result.monitoring_recent_count;
   } finally {
     loading.value = false;
   }
@@ -215,6 +255,8 @@ const changeEnabled = async () => {
     await settingsApi.updateMonitoring({
       monitoring_enabled: next,
       ...currentWindow(),
+      monitoring_interval_minutes: intervalMinutes.value,
+      monitoring_recent_count: displayCount.value,
     });
     ElMessage.success(next ? '账号监控已开启' : '账号监控已关闭');
     return true;
@@ -232,13 +274,44 @@ const changeRange = async () => {
     await settingsApi.updateMonitoring({
       monitoring_enabled: enabled.value,
       ...currentWindow(),
+      monitoring_interval_minutes: intervalMinutes.value,
+      monitoring_recent_count: displayCount.value,
     });
     ElMessage.success('监控时间范围已保存');
   } catch (error) {
     ElMessage.error(`更新监控时间范围失败：${String(error)}`);
-    await load();
   } finally {
     savingRange.value = false;
+    await load();
+  }
+};
+
+const changeOptions = async () => {
+  if (savingConfig.value) return;
+  if (
+    recentCount.value == null ||
+    !Number.isInteger(recentCount.value) ||
+    recentCount.value < 10 ||
+    recentCount.value > 40
+  ) {
+    ElMessage.error('最近记录数必须为 10 到 40 的整数');
+    await load();
+    return;
+  }
+  savingOptions.value = true;
+  try {
+    await settingsApi.updateMonitoring({
+      monitoring_enabled: enabled.value,
+      ...currentWindow(),
+      monitoring_interval_minutes: intervalMinutes.value,
+      monitoring_recent_count: recentCount.value,
+    });
+    ElMessage.success('监控配置已保存，无需重启');
+  } catch (error) {
+    ElMessage.error(`保存监控配置失败：${String(error)}`);
+  } finally {
+    savingOptions.value = false;
+    await load();
   }
 };
 
@@ -250,9 +323,12 @@ const providerForModel = (type: string, name?: string) =>
   name ? modelProviders.value.get(`${type}\u0000${name}`) : undefined;
 
 const normalized = (records: MonitorRecord[]) => {
-  const recent = records.slice(-STATUS_COUNT);
-  const emptyCount = STATUS_COUNT - recent.length;
-  return Array.from({ length: STATUS_COUNT }, (_, index) => recent[index - emptyCount] ?? null);
+  const recent = records.slice(-displayCount.value);
+  const emptyCount = displayCount.value - recent.length;
+  return Array.from(
+    { length: displayCount.value },
+    (_, index) => recent[index - emptyCount] ?? null,
+  );
 };
 
 const avgText = (duration?: number) =>
@@ -293,6 +369,15 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.interval-select {
+  width: 110px;
+}
+.check {
+  flex-shrink: 0;
 }
 
 .range-label {

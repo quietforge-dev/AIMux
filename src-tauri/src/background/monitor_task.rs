@@ -21,7 +21,8 @@ const MONITOR_CONCURRENCY: usize = 5;
 const MONITOR_REQUEST_TIMEOUT: Duration = Duration::from_secs(40);
 
 pub async fn run(state: Arc<AppState>) {
-    let mut ticker = interval(Duration::from_secs(120));
+    let mut ticker = interval(Duration::from_secs(5));
+    let mut last_started: Option<tokio::time::Instant> = None;
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     loop {
         ticker.tick().await;
@@ -35,9 +36,42 @@ pub async fn run(state: Arc<AppState>) {
         {
             continue;
         }
+        if !monitoring_due(
+            last_started.map(|last| last.elapsed()),
+            settings.monitoring_interval_minutes,
+        ) {
+            continue;
+        }
+        last_started = Some(tokio::time::Instant::now());
         if let Err(error) = round(&state).await {
             tracing::error!(%error, "监控轮次失败");
         }
+    }
+}
+
+fn monitoring_due(elapsed: Option<Duration>, interval_minutes: u64) -> bool {
+    let interval = Duration::from_secs(interval_minutes.clamp(2, 10) * 60);
+    elapsed.is_none_or(|elapsed| elapsed >= interval)
+}
+
+#[cfg(test)]
+mod interval_tests {
+    use super::monitoring_due;
+    use std::time::Duration;
+
+    #[test]
+    fn first_round_and_exact_boundary_are_due() {
+        assert!(monitoring_due(None, 2));
+        assert!(!monitoring_due(Some(Duration::from_secs(119)), 2));
+        assert!(monitoring_due(Some(Duration::from_secs(120)), 2));
+    }
+
+    #[test]
+    fn changed_interval_uses_time_since_last_round() {
+        let elapsed = Some(Duration::from_secs(180));
+        assert!(monitoring_due(elapsed, 2));
+        assert!(!monitoring_due(elapsed, 10));
+        assert!(monitoring_due(Some(Duration::from_secs(600)), 10));
     }
 }
 

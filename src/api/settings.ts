@@ -8,6 +8,8 @@ export type Settings = {
   upstream_proxy_enabled: boolean;
   upstream_proxy_url: string;
   monitoring_enabled: boolean;
+  monitoring_interval_minutes: number;
+  monitoring_recent_count: number;
   monitoring_start_time: string | null;
   monitoring_end_time: string | null;
   local_token: string;
@@ -17,6 +19,8 @@ export type MonitoringSettings = {
   monitoring_enabled: boolean;
   monitoring_start_time: string | null;
   monitoring_end_time: string | null;
+  monitoring_interval_minutes: number;
+  monitoring_recent_count: number;
 };
 export const settingsApi = {
   get: () => get<Settings>('/api/settings'),

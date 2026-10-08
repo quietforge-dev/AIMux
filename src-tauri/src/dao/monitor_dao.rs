@@ -5,7 +5,6 @@ pub async fn list_grouped(
     pool: &SqlitePool,
     ids: &[String],
     limit: i64,
-    since: &str,
 ) -> Result<Vec<MonitorRecord>, AppError> {
     if ids.is_empty() {
         return Ok(Vec::new());
@@ -20,7 +19,7 @@ pub async fn list_grouped(
                 SELECT id,account_id,account_name,account_type,model,checked_at,duration_ms,success,status_code,error_code,error_message,
                        ROW_NUMBER() OVER (PARTITION BY account_id ORDER BY checked_at DESC,id DESC) AS row_number
                 FROM monitor_records
-                WHERE account_id IN ({}) AND checked_at >= ?
+                WHERE account_id IN ({})
             )
             SELECT id,account_id,account_name,account_type,model,checked_at,duration_ms,success,status_code,error_code,error_message
             FROM ranked
@@ -33,7 +32,7 @@ pub async fn list_grouped(
     for id in ids {
         query = query.bind(id);
     }
-    Ok(query.bind(since).bind(limit.max(1)).fetch_all(pool).await?)
+    Ok(query.bind(limit.max(1)).fetch_all(pool).await?)
 }
 pub async fn create_and_refresh_account_average(
     pool: &SqlitePool,
