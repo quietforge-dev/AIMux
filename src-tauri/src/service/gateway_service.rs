@@ -109,6 +109,7 @@ pub async fn forward(
                 .await?;
                 account_service::record_failure(pool, &account.id, Some(&last.1), Some(&last.2))
                     .await?;
+                pause_before_retry(attempt, max_attempts, &trace_id).await;
                 continue;
             }
         };
@@ -160,6 +161,7 @@ pub async fn forward(
                 Some(&message),
             )
             .await?;
+            pause_before_retry(attempt, max_attempts, &trace_id).await;
             continue;
         }
         if upstream_body
@@ -211,6 +213,7 @@ pub async fn forward(
                         Some(&message),
                     )
                     .await?;
+                    pause_before_retry(attempt, max_attempts, &trace_id).await;
                     continue;
                 }
             };
@@ -457,6 +460,20 @@ pub async fn forward(
         axum::Json(json!({"error":{"message":last.2,"type":last.1}})),
     )
         .into_response())
+}
+
+async fn pause_before_retry(attempt: i64, max_attempts: i64, trace_id: &str) {
+    if attempt >= max_attempts {
+        return;
+    }
+    tracing::info!(
+        trace_id,
+        attempt,
+        next_attempt = attempt + 1,
+        delay_seconds = 1,
+        "上游失败，等待后重试"
+    );
+    tokio::time::sleep(Duration::from_secs(1)).await;
 }
 
 async fn record(
