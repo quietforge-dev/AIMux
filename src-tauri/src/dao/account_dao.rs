@@ -275,11 +275,7 @@ pub async fn adjust(
     message: Option<&str>,
 ) -> Result<(), AppError> {
     let delta = if success {
-        if kind == "monitor" {
-            "CASE WHEN priority < 8 THEN priority + 1 ELSE priority END"
-        } else {
-            "priority + 1"
-        }
+        "priority + 1"
     } else if kind == "gateway" {
         "priority - 2"
     } else {

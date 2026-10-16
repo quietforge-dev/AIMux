@@ -41,6 +41,28 @@ async fn creates_account_with_current_columns() {
 }
 
 #[tokio::test]
+async fn monitor_success_increases_priority_and_caps_at_nine() {
+    let path = std::env::temp_dir().join(format!("aimux-account-{}.sqlite3", uuid::Uuid::new_v4()));
+    let pool = connect(&path).await.expect("创建数据库失败");
+    let mut payload = input("monitor-priority", "https://example.test".into());
+    payload.priority = 7;
+    let account = create(&pool, payload).await.expect("创建账号失败");
+
+    for expected in [8, 9, 9] {
+        adjust(&pool, &account.id, true, "monitor", None, None)
+            .await
+            .expect("记录监控成功失败");
+        assert_eq!(
+            get(&pool, &account.id).await.unwrap().unwrap().priority,
+            expected
+        );
+    }
+
+    pool.close().await;
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
 async fn allows_multiplier_up_to_point_ninety_nine() {
     let path = std::env::temp_dir().join(format!("aimux-account-{}.sqlite3", uuid::Uuid::new_v4()));
     let pool = connect(&path).await.expect("创建数据库失败");
