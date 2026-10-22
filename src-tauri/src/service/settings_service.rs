@@ -10,6 +10,7 @@ pub fn validate(settings: &Settings) -> Result<(), String> {
         ("上游超时", settings.upstream_timeout_priority_penalty),
         ("请求失败", settings.request_failure_priority_penalty),
         ("低缓存率", settings.low_cache_priority_penalty),
+        ("连续首字慢", settings.slow_first_token_priority_penalty),
     ] {
         if !(1..=3).contains(&penalty) {
             return Err(format!("{name}优先级扣减数必须为 1 到 3"));
@@ -17,6 +18,12 @@ pub fn validate(settings: &Settings) -> Result<(), String> {
     }
     if !(1..=1000).contains(&settings.low_cache_consecutive) {
         return Err("连续低缓存次数必须为 1 到 1000".into());
+    }
+    if !(1..=1000).contains(&settings.slow_first_token_consecutive) {
+        return Err("连续首字慢次数必须为 1 到 1000".into());
+    }
+    if !(1..=86400).contains(&settings.slow_first_token_threshold_seconds) {
+        return Err("首字慢阈值必须为 1 到 86400 秒".into());
     }
     if !(1..=100).contains(&settings.low_cache_threshold_percent) {
         return Err("缓存率阈值必须为 1 到 100%".into());
@@ -100,13 +107,14 @@ mod tests {
     #[test]
     fn priority_penalties_accept_only_one_to_three() {
         for value in [0, 1, 2, 3, 4] {
-            for field in 0..4 {
+            for field in 0..5 {
                 let mut settings = Settings::default();
                 match field {
                     0 => settings.first_token_timeout_priority_penalty = value,
                     1 => settings.upstream_timeout_priority_penalty = value,
                     2 => settings.request_failure_priority_penalty = value,
-                    _ => settings.low_cache_priority_penalty = value,
+                    3 => settings.low_cache_priority_penalty = value,
+                    _ => settings.slow_first_token_priority_penalty = value,
                 }
                 assert_eq!(validate(&settings).is_ok(), (1..=3).contains(&value));
             }
@@ -128,6 +136,24 @@ mod tests {
                 ..Settings::default()
             };
             assert_eq!(validate(&settings).is_ok(), (1..=100).contains(&value));
+        }
+    }
+
+    #[test]
+    fn validates_slow_first_token_bounds() {
+        for value in [0, 1, 1000, 1001] {
+            let settings = Settings {
+                slow_first_token_consecutive: value,
+                ..Settings::default()
+            };
+            assert_eq!(validate(&settings).is_ok(), (1..=1000).contains(&value));
+        }
+        for value in [0, 1, 86400, 86401] {
+            let settings = Settings {
+                slow_first_token_threshold_seconds: value,
+                ..Settings::default()
+            };
+            assert_eq!(validate(&settings).is_ok(), (1..=86400).contains(&value));
         }
     }
 }

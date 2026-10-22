@@ -158,6 +158,47 @@
           缓存达标、请求失败或缓存数据缺失/异常会清零；成功且缓存达标或无法评估时仍按原规则加分。
           计数仅保存在当前进程内存中，重启或修改缓存策略后清零；账号测试和定时监控不参与统计。
         </p>
+        <el-divider content-position="left">连续首字慢扣减</el-divider>
+        <el-form-item label="启用首字慢策略">
+          <el-switch v-model="form.slow_first_token_enabled" />
+        </el-form-item>
+        <div class="priority-row">
+          <el-form-item label="连续首字慢次数" prop="slow_first_token_consecutive">
+            <el-input-number
+              v-model="form.slow_first_token_consecutive"
+              :min="1"
+              :max="1000"
+              :precision="0"
+              step-strictly
+              :disabled="!form.slow_first_token_enabled"
+            />
+          </el-form-item>
+          <el-form-item label="首字高于（秒）" prop="slow_first_token_threshold_seconds">
+            <el-input-number
+              v-model="form.slow_first_token_threshold_seconds"
+              :min="1"
+              :max="86400"
+              :precision="0"
+              step-strictly
+              :disabled="!form.slow_first_token_enabled"
+            />
+          </el-form-item>
+          <el-form-item label="优先级扣减数" prop="slow_first_token_priority_penalty">
+            <el-input-number
+              v-model="form.slow_first_token_priority_penalty"
+              :min="1"
+              :max="3"
+              :precision="0"
+              step-strictly
+              :disabled="!form.slow_first_token_enabled"
+            />
+          </el-form-item>
+        </div>
+        <p class="priority-help">
+          仅统计实际网关的成功流式请求，按账号累计，流结束后计算一次。首字耗时严格超过阈值时累计，达到次数后扣减并清零，不中断请求、不触发重试。
+          首字达标、请求失败或缺少首字数据会清零。与缓存率策略独立计数；任一策略判定表现不佳，本次不加分，两项同时触发时合并扣减，最低为
+          0。 计数仅保存在当前进程内存中，重启或修改本策略后清零；不影响上方首字超时配置。
+        </p>
       </el-form>
     </el-card>
   </div>
@@ -183,6 +224,10 @@ const form = reactive<Settings>({
   low_cache_consecutive: 5,
   low_cache_threshold_percent: 85,
   low_cache_priority_penalty: 3,
+  slow_first_token_enabled: false,
+  slow_first_token_consecutive: 5,
+  slow_first_token_threshold_seconds: 10,
+  slow_first_token_priority_penalty: 2,
   upstream_proxy_enabled: false,
   upstream_proxy_url: 'http://127.0.0.1:7890',
   monitoring_enabled: true,
@@ -208,6 +253,11 @@ const priorityRules: FormRules<Settings> = {
   upstream_timeout_priority_penalty: [penaltyRule],
   request_failure_priority_penalty: [penaltyRule],
   low_cache_priority_penalty: [penaltyRule],
+  slow_first_token_priority_penalty: [penaltyRule],
+  slow_first_token_consecutive: [{ ...penaltyRule, max: 1000, message: '请输入 1 到 1000 的整数' }],
+  slow_first_token_threshold_seconds: [
+    { ...penaltyRule, max: 86400, message: '请输入 1 到 86400 的整数' },
+  ],
   low_cache_consecutive: [{ ...penaltyRule, max: 1000, message: '请输入 1 到 1000 的整数' }],
   low_cache_threshold_percent: [{ ...penaltyRule, max: 100, message: '请输入 1 到 100 的整数' }],
 };

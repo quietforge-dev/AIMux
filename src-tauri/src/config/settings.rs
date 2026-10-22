@@ -25,6 +25,14 @@ pub struct Settings {
     pub low_cache_threshold_percent: u8,
     #[serde(default = "default_low_cache_penalty")]
     pub low_cache_priority_penalty: u8,
+    #[serde(default)]
+    pub slow_first_token_enabled: bool,
+    #[serde(default = "default_low_cache_consecutive")]
+    pub slow_first_token_consecutive: u32,
+    #[serde(default = "default_slow_first_token_seconds")]
+    pub slow_first_token_threshold_seconds: u64,
+    #[serde(default = "default_request_failure_priority_penalty")]
+    pub slow_first_token_priority_penalty: u8,
     pub upstream_proxy_enabled: bool,
     pub upstream_proxy_url: String,
     pub monitoring_enabled: bool,
@@ -55,6 +63,10 @@ impl Default for Settings {
             low_cache_consecutive: default_low_cache_consecutive(),
             low_cache_threshold_percent: default_low_cache_threshold(),
             low_cache_priority_penalty: default_low_cache_penalty(),
+            slow_first_token_enabled: false,
+            slow_first_token_consecutive: default_low_cache_consecutive(),
+            slow_first_token_threshold_seconds: default_slow_first_token_seconds(),
+            slow_first_token_priority_penalty: default_request_failure_priority_penalty(),
             upstream_proxy_enabled: false,
             upstream_proxy_url: "http://127.0.0.1:7890".into(),
             monitoring_enabled: true,
@@ -82,6 +94,9 @@ fn default_low_cache_threshold() -> u8 {
 }
 fn default_low_cache_penalty() -> u8 {
     3
+}
+fn default_slow_first_token_seconds() -> u64 {
+    10
 }
 fn default_request_failure_priority_penalty() -> u8 {
     2
@@ -163,6 +178,10 @@ mod tests {
         object.remove("low_cache_consecutive");
         object.remove("low_cache_threshold_percent");
         object.remove("low_cache_priority_penalty");
+        object.remove("slow_first_token_enabled");
+        object.remove("slow_first_token_consecutive");
+        object.remove("slow_first_token_threshold_seconds");
+        object.remove("slow_first_token_priority_penalty");
         let loaded: Settings = serde_json::from_value(value).unwrap();
         assert_eq!(loaded.port, 7790);
         assert_eq!(loaded.request_retry_attempts, 7);
@@ -173,5 +192,9 @@ mod tests {
         assert_eq!(loaded.low_cache_consecutive, 5);
         assert_eq!(loaded.low_cache_threshold_percent, 85);
         assert_eq!(loaded.low_cache_priority_penalty, 3);
+        assert!(!loaded.slow_first_token_enabled);
+        assert_eq!(loaded.slow_first_token_consecutive, 5);
+        assert_eq!(loaded.slow_first_token_threshold_seconds, 10);
+        assert_eq!(loaded.slow_first_token_priority_penalty, 2);
     }
 }

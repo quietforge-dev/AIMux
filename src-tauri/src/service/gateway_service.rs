@@ -433,12 +433,13 @@ pub async fn forward(
                     if let Err(error) = cache_priority_for_stream
                         .lock()
                         .await
-                        .success(
+                        .finish_success(
                             &pool_for_stream,
                             &account_for_stream.id,
                             cache_ticket.as_ref(),
                             tokens.0,
                             tokens.3,
+                            first_token_ms,
                         )
                         .await
                     {

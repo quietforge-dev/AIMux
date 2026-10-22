@@ -12,6 +12,10 @@ export type Settings = {
   low_cache_consecutive: number;
   low_cache_threshold_percent: number;
   low_cache_priority_penalty: number;
+  slow_first_token_enabled: boolean;
+  slow_first_token_consecutive: number;
+  slow_first_token_threshold_seconds: number;
+  slow_first_token_priority_penalty: number;
   upstream_proxy_enabled: boolean;
   upstream_proxy_url: string;
   monitoring_enabled: boolean;
