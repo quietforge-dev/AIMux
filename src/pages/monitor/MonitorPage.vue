@@ -115,7 +115,9 @@
         :width="columnWidth('averageDuration', 90)"
       >
         <template #header>
-          <el-tooltip content="按最近 30 条有耗时的检测记录计算，不受展示次数影响">
+          <el-tooltip
+            content="按最近 30 条成功检测计算，新检测耗时为流式首字耗时；历史记录保留原口径，不受展示次数影响"
+          >
             <span>平均耗时</span>
           </el-tooltip>
         </template>
@@ -352,7 +354,7 @@ const cellTitle = (record: MonitorRecord | null) => {
   const duration =
     record.duration_ms == null ? '-' : `${(record.duration_ms / 1000).toFixed(2)} 秒`;
   const error = record.success ? '' : `，错误：${record.error_message || record.error_code || '-'}`;
-  return `${formatTime(record.checked_at)}，${result}，耗时：${duration}，状态码：${record.status_code ?? '-'}${error}`;
+  return `${formatTime(record.checked_at)}，${result}，探测耗时：${duration}，状态码：${record.status_code ?? '-'}${error}`;
 };
 
 onMounted(() => {

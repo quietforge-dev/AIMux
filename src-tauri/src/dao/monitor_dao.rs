@@ -61,7 +61,7 @@ pub async fn create_and_refresh_account_average(
                 FROM (
                     SELECT duration_ms
                     FROM monitor_records
-                    WHERE account_id = ? AND duration_ms IS NOT NULL
+                    WHERE account_id = ? AND duration_ms IS NOT NULL AND success = 1
                     ORDER BY checked_at DESC, id DESC
                     LIMIT 30
                 )

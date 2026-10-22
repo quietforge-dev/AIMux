@@ -31,6 +31,19 @@ pub async fn prepare(
 }
 
 pub fn build_request(account: &Account, model: &str) -> AccountProbe {
+    build_request_with_stream(account, model, "ping", false)
+}
+
+pub fn build_stream_request(account: &Account, model: &str, prompt: &str) -> AccountProbe {
+    build_request_with_stream(account, model, prompt, true)
+}
+
+fn build_request_with_stream(
+    account: &Account,
+    model: &str,
+    prompt: &str,
+    stream: bool,
+) -> AccountProbe {
     let upstream_model =
         account_service::mapping(account, Some(model)).unwrap_or_else(|| model.into());
     let endpoint = if account.r#type == "anthropic" {
@@ -38,11 +51,14 @@ pub fn build_request(account: &Account, model: &str) -> AccountProbe {
     } else {
         "/v1/chat/completions"
     };
-    let body = json!({
+    let mut body = json!({
         "model": upstream_model,
         "max_tokens": 1,
-        "messages": [{"role": "user", "content": "ping"}],
+        "messages": [{"role": "user", "content": prompt}],
     });
+    if stream {
+        body["stream"] = serde_json::Value::Bool(true);
+    }
     AccountProbe {
         model: model.to_owned(),
         endpoint,
