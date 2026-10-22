@@ -29,7 +29,16 @@ async fn forward(
     body: serde_json::Value,
 ) -> Result<Response, AppError> {
     let settings = s.settings.read().await.clone();
-    gateway_service::forward(&s.pool, &settings, body, endpoint, "openai", headers).await
+    gateway_service::forward(
+        &s.pool,
+        &settings,
+        &s.cache_priority,
+        body,
+        endpoint,
+        "openai",
+        headers,
+    )
+    .await
 }
 macro_rules! endpoint {
     ($name:ident,$path:literal) => {

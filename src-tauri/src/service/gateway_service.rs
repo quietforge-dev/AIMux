@@ -24,6 +24,7 @@ use crate::{
 pub async fn forward(
     pool: &SqlitePool,
     settings: &Settings,
+    cache_priority: &crate::service::cache_priority_service::SharedCachePriority,
     body: Value,
     endpoint: &str,
     kind: &str,
@@ -41,8 +42,14 @@ pub async fn forward(
         "上游请求失败".to_owned(),
     );
     for attempt in 1..=max_attempts {
-        let Some(account) = account_dao::pick_one(pool, requested.as_deref(), kind).await? else {
-            break;
+        let (account, cache_ticket) = {
+            let mut tracker = cache_priority.lock().await;
+            let Some(account) = account_dao::pick_one(pool, requested.as_deref(), kind).await?
+            else {
+                break;
+            };
+            let ticket = tracker.begin(&account.id, settings);
+            (account, ticket)
         };
         account_dao::mark_used(pool, &account.id).await?;
         // Keep the client request immutable. A model mapping belongs only to this
@@ -76,6 +83,7 @@ pub async fn forward(
         {
             Ok(value) => value,
             Err(error) => {
+                cache_priority.lock().await.reset(cache_ticket.as_ref());
                 tracing::error!(
                     trace_id = %trace_id,
                     account_id = %account.id,
@@ -85,8 +93,17 @@ pub async fn forward(
                     "网关上游请求失败"
                 );
                 last = (
-                    StatusCode::BAD_GATEWAY,
-                    "upstream_connection_error".into(),
+                    if matches!(error, AppError::UpstreamTimeout(_)) {
+                        StatusCode::GATEWAY_TIMEOUT
+                    } else {
+                        StatusCode::BAD_GATEWAY
+                    },
+                    if matches!(error, AppError::UpstreamTimeout(_)) {
+                        "upstream_timeout"
+                    } else {
+                        "upstream_connection_error"
+                    }
+                    .into(),
                     error.to_string(),
                 );
                 record(
@@ -97,7 +114,7 @@ pub async fn forward(
                     endpoint,
                     false,
                     false,
-                    Some(502),
+                    Some(last.0.as_u16() as i64),
                     Some(&last.1),
                     Some(&last.2),
                     attempt,
@@ -107,8 +124,14 @@ pub async fn forward(
                     None,
                 )
                 .await?;
-                account_service::record_failure(pool, &account.id, Some(&last.1), Some(&last.2))
-                    .await?;
+                account_service::record_failure(
+                    pool,
+                    &account.id,
+                    settings,
+                    Some(&last.1),
+                    Some(&last.2),
+                )
+                .await?;
                 pause_before_retry(attempt, max_attempts, &trace_id).await;
                 continue;
             }
@@ -121,6 +144,7 @@ pub async fn forward(
             .unwrap_or("application/json")
             .to_owned();
         if !status.is_success() {
+            cache_priority.lock().await.reset(cache_ticket.as_ref());
             let bytes = response.bytes().await.unwrap_or_default();
             let message = response_body(&bytes);
             tracing::error!(
@@ -157,6 +181,7 @@ pub async fn forward(
             account_service::record_failure(
                 pool,
                 &account.id,
+                settings,
                 Some("upstream_error"),
                 Some(&message),
             )
@@ -175,6 +200,7 @@ pub async fn forward(
             let first_chunk = match wait_for_first_chunk(&mut upstream, first_chunk_timeout).await {
                 Ok(chunk) => chunk,
                 Err(error) => {
+                    cache_priority.lock().await.reset(cache_ticket.as_ref());
                     let error_code = error.error_code();
                     let status_code = error.status_code();
                     let message = error.message();
@@ -209,6 +235,7 @@ pub async fn forward(
                     account_service::record_failure(
                         pool,
                         &account.id,
+                        settings,
                         Some(error_code),
                         Some(&message),
                     )
@@ -258,6 +285,8 @@ pub async fn forward(
                 }
             };
             let pool_for_stream = pool.clone();
+            let settings_for_stream = settings.clone();
+            let cache_priority_for_stream = cache_priority.clone();
             let account_for_stream = account.clone();
             let trace_for_stream = trace_id.clone();
             let model_for_stream = requested.clone();
@@ -272,6 +301,7 @@ pub async fn forward(
             tokio::spawn(async move {
                 let mut captured = first_chunk.to_vec();
                 let mut stream_error = None;
+                let mut upstream_timed_out = false;
                 let mut stream_complete = false;
                 let sent = tokio::time::timeout(stream_timeout, tx.send(Ok(first_chunk))).await;
                 if !matches!(sent, Ok(Ok(()))) {
@@ -305,6 +335,7 @@ pub async fn forward(
                             }
                         }
                         Ok(Some(Err(error))) => {
+                            upstream_timed_out = error.is_timeout();
                             let message = error.to_string();
                             stream_error = Some(message.clone());
                             let _ = tx.try_send(Err(std::io::Error::other(message)));
@@ -312,6 +343,7 @@ pub async fn forward(
                         }
                         Ok(None) => break,
                         Err(_) => {
+                            upstream_timed_out = true;
                             let message = "上游流读取超时".to_owned();
                             stream_error = Some(message.clone());
                             let _ = tx.try_send(Err(std::io::Error::other(message)));
@@ -324,6 +356,8 @@ pub async fn forward(
                 let error_message = stream_error.as_deref();
                 let error_code = if success {
                     None
+                } else if upstream_timed_out {
+                    Some("upstream_timeout")
                 } else {
                     Some("stream_read_error")
                 };
@@ -396,13 +430,29 @@ pub async fn forward(
                     true
                 };
                 if persisted && success {
-                    let _ =
-                        account_service::record_success(&pool_for_stream, &account_for_stream.id)
-                            .await;
+                    if let Err(error) = cache_priority_for_stream
+                        .lock()
+                        .await
+                        .success(
+                            &pool_for_stream,
+                            &account_for_stream.id,
+                            cache_ticket.as_ref(),
+                            tokens.0,
+                            tokens.3,
+                        )
+                        .await
+                    {
+                        tracing::error!(account_id = %account_for_stream.id, %error, "流式请求更新缓存策略优先级失败");
+                    }
                 } else {
+                    cache_priority_for_stream
+                        .lock()
+                        .await
+                        .reset(cache_ticket.as_ref());
                     let _ = account_service::record_failure(
                         &pool_for_stream,
                         &account_for_stream.id,
+                        &settings_for_stream,
                         error_code,
                         error_message,
                     )
@@ -425,11 +475,49 @@ pub async fn forward(
                 .map_err(|e| AppError::Internal(e.to_string()))?;
             return Ok(response);
         }
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| AppError::Upstream(e.to_string()))?;
+        let bytes = match response.bytes().await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                cache_priority.lock().await.reset(cache_ticket.as_ref());
+                let (status, code) = if error.is_timeout() {
+                    (StatusCode::GATEWAY_TIMEOUT, "upstream_timeout")
+                } else {
+                    (StatusCode::BAD_GATEWAY, "upstream_read_error")
+                };
+                let message = error.to_string();
+                record(
+                    pool,
+                    &trace_id,
+                    &account,
+                    requested.as_deref(),
+                    endpoint,
+                    false,
+                    false,
+                    Some(status.as_u16() as i64),
+                    Some(code),
+                    Some(&message),
+                    attempt,
+                    started,
+                    None,
+                    reasoning_effort.as_deref(),
+                    None,
+                )
+                .await?;
+                account_service::record_failure(
+                    pool,
+                    &account.id,
+                    settings,
+                    Some(code),
+                    Some(&message),
+                )
+                .await?;
+                last = (status, code.into(), message);
+                pause_before_retry(attempt, max_attempts, &trace_id).await;
+                continue;
+            }
+        };
         let payload = serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null);
+        let tokens = dto::usage(&payload);
         record(
             pool,
             &trace_id,
@@ -445,10 +533,14 @@ pub async fn forward(
             started,
             None,
             reasoning_effort.as_deref(),
-            Some(dto::usage(&payload)),
+            Some(tokens),
         )
         .await?;
-        account_service::record_success(pool, &account.id).await?;
+        cache_priority
+            .lock()
+            .await
+            .success(pool, &account.id, cache_ticket.as_ref(), tokens.0, tokens.3)
+            .await?;
         return Response::builder()
             .status(status)
             .header("content-type", content_type)

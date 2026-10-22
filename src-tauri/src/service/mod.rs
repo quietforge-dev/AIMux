@@ -1,6 +1,7 @@
 pub mod account_model_discovery_service;
 pub mod account_probe_service;
 pub mod account_service;
+pub mod cache_priority_service;
 pub mod gateway_service;
 pub mod model_service;
 pub mod monitor_service;

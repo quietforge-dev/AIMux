@@ -71,7 +71,11 @@ pub async fn post_with_timeout(
             %error,
             "上游请求连接失败"
         );
-        AppError::Upstream(error.to_string())
+        if error.is_timeout() {
+            AppError::UpstreamTimeout(error.to_string())
+        } else {
+            AppError::Upstream(error.to_string())
+        }
     })?;
     tracing::info!(
         account_id = %account.id,

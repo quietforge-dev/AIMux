@@ -82,18 +82,29 @@ async fn update(
     let current = account_dao::get(&s.pool, &id)
         .await?
         .ok_or_else(|| AppError::NotFound("账号不存在".into()))?;
+    let reset_cache = p
+        .api_key
+        .as_ref()
+        .is_some_and(|key| key != &current.api_key_encrypted)
+        || p.base_url
+            .as_ref()
+            .is_some_and(|url| url != &current.base_url);
+    let mut tracker = s.cache_priority.lock().await;
+    let updated = account_dao::update(&s.pool, current, p).await?;
+    if reset_cache {
+        tracker.remove(&id);
+    }
     Ok(Json(
-        serde_json::to_value(account_dao::to_view(
-            account_dao::update(&s.pool, current, p).await?,
-        ))
-        .unwrap(),
+        serde_json::to_value(account_dao::to_view(updated)).unwrap(),
     ))
 }
 async fn remove(
     State(s): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
+    let mut tracker = s.cache_priority.lock().await;
     account_dao::delete(&s.pool, &id).await?;
+    tracker.remove(&id);
     Ok(StatusCode::NO_CONTENT)
 }
 async fn discover_models(

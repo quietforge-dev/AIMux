@@ -275,14 +275,23 @@ pub async fn adjust(
     message: Option<&str>,
 ) -> Result<(), AppError> {
     let delta = if success {
-        "priority + 1"
+        1
     } else if kind == "gateway" {
-        "priority - 2"
+        -2
     } else {
-        "priority - 1"
+        -1
     };
-    let safe = format!("UPDATE accounts SET priority=MAX(0,MIN(9,{})),last_error_code=?,last_error_message=?,updated_at=? WHERE id=?",delta);
-    sqlx::query(&safe)
+    adjust_by(pool, id, delta, code, message).await
+}
+pub async fn adjust_by(
+    pool: &SqlitePool,
+    id: &str,
+    delta: i64,
+    code: Option<&str>,
+    message: Option<&str>,
+) -> Result<(), AppError> {
+    sqlx::query("UPDATE accounts SET priority=MAX(0,MIN(9,priority + ?)),last_error_code=?,last_error_message=?,updated_at=? WHERE id=?")
+        .bind(delta)
         .bind(code)
         .bind(message)
         .bind(utc_now_string())

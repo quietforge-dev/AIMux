@@ -15,6 +15,8 @@ pub enum AppError {
     NotFound(String),
     #[error("上游请求失败: {0}")]
     Upstream(String),
+    #[error("上游请求超时: {0}")]
+    UpstreamTimeout(String),
     #[error("内部错误: {0}")]
     Internal(String),
 }
@@ -25,6 +27,7 @@ impl IntoResponse for AppError {
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::Upstream(_) => StatusCode::BAD_GATEWAY,
+            AppError::UpstreamTimeout(_) => StatusCode::GATEWAY_TIMEOUT,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (

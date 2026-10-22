@@ -13,6 +13,7 @@ use crate::{
 pub struct AppState {
     pub pool: SqlitePool,
     pub settings: SharedSettings,
+    pub cache_priority: crate::service::cache_priority_service::SharedCachePriority,
 }
 
 impl AppState {
@@ -30,6 +31,9 @@ impl AppState {
         }
         Ok(Self {
             pool,
+            cache_priority: Arc::new(tokio::sync::Mutex::new(
+                crate::service::cache_priority_service::CachePriorityTracker::new(&settings),
+            )),
             settings: Arc::new(tokio::sync::RwLock::new(settings)),
         })
     }

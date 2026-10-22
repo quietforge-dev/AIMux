@@ -19,7 +19,10 @@ async fn update_settings(
     State(s): State<Arc<AppState>>,
     Json(value): Json<crate::config::Settings>,
 ) -> Result<Json<crate::config::Settings>, AppError> {
-    Ok(Json(settings_service::update(&s.settings, value).await?))
+    let mut tracker = s.cache_priority.lock().await;
+    let saved = settings_service::update(&s.settings, value).await?;
+    tracker.configure(&saved);
+    Ok(Json(saved))
 }
 async fn update_monitoring(
     State(s): State<Arc<AppState>>,

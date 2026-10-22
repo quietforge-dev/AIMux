@@ -13,12 +13,6 @@
           <el-form-item label="端口">
             <el-input-number v-model="form.port" :min="1" :max="65535" />
           </el-form-item>
-          <el-form-item label="上游超时（秒）">
-            <el-input-number v-model="form.upstream_timeout_seconds" :min="1" />
-          </el-form-item>
-          <el-form-item label="首字超时（秒）">
-            <el-input-number v-model="form.first_token_timeout_seconds" :min="1" />
-          </el-form-item>
           <el-form-item label="重试次数">
             <el-input-number v-model="form.request_retry_attempts" :min="1" :max="20" />
           </el-form-item>
@@ -70,11 +64,108 @@
         </div>
       </el-form>
     </el-card>
+    <el-card class="priority-card">
+      <template #header>优先级扣减策略</template>
+      <el-form
+        ref="priorityFormRef"
+        :model="form"
+        :rules="priorityRules"
+        label-width="155px"
+        class="settings-form"
+      >
+        <div class="priority-row">
+          <el-form-item label="首字超时（秒）">
+            <el-input-number v-model="form.first_token_timeout_seconds" :min="1" />
+          </el-form-item>
+          <el-form-item label="优先级扣减数" prop="first_token_timeout_priority_penalty">
+            <el-input-number
+              v-model="form.first_token_timeout_priority_penalty"
+              :min="1"
+              :max="3"
+              :step="1"
+              step-strictly
+              :precision="0"
+            />
+          </el-form-item>
+        </div>
+        <div class="priority-row">
+          <el-form-item label="上游超时（秒）">
+            <el-input-number v-model="form.upstream_timeout_seconds" :min="1" />
+          </el-form-item>
+          <el-form-item label="优先级扣减数" prop="upstream_timeout_priority_penalty">
+            <el-input-number
+              v-model="form.upstream_timeout_priority_penalty"
+              :min="1"
+              :max="3"
+              :step="1"
+              step-strictly
+              :precision="0"
+            />
+          </el-form-item>
+        </div>
+        <el-form-item label="请求失败扣减数" prop="request_failure_priority_penalty">
+          <el-input-number
+            v-model="form.request_failure_priority_penalty"
+            :min="1"
+            :max="3"
+            :step="1"
+            step-strictly
+            :precision="0"
+          />
+        </el-form-item>
+        <p class="priority-help">
+          首字超时、上游超时分别按对应策略扣减，其他失败使用请求失败扣减数。每次失败只扣一次，优先级最低为
+          0。保存后对后续请求生效。
+        </p>
+        <el-divider content-position="left">连续低缓存率扣减</el-divider>
+        <el-form-item label="启用缓存率策略">
+          <el-switch v-model="form.low_cache_priority_enabled" />
+        </el-form-item>
+        <div class="priority-row">
+          <el-form-item label="连续低缓存次数" prop="low_cache_consecutive">
+            <el-input-number
+              v-model="form.low_cache_consecutive"
+              :min="1"
+              :max="1000"
+              :precision="0"
+              step-strictly
+              :disabled="!form.low_cache_priority_enabled"
+            />
+          </el-form-item>
+          <el-form-item label="缓存率低于（%）" prop="low_cache_threshold_percent">
+            <el-input-number
+              v-model="form.low_cache_threshold_percent"
+              :min="1"
+              :max="100"
+              :precision="0"
+              step-strictly
+              :disabled="!form.low_cache_priority_enabled"
+            />
+          </el-form-item>
+          <el-form-item label="优先级扣减数" prop="low_cache_priority_penalty">
+            <el-input-number
+              v-model="form.low_cache_priority_penalty"
+              :min="1"
+              :max="3"
+              :precision="0"
+              step-strictly
+              :disabled="!form.low_cache_priority_enabled"
+            />
+          </el-form-item>
+        </div>
+        <p class="priority-help">
+          仅统计实际网关请求，按账号累计，流式请求结束后计算一次。有效低缓存请求不增加优先级，连续达到次数后扣减并清零。
+          缓存达标、请求失败或缓存数据缺失/异常会清零；成功且缓存达标或无法评估时仍按原规则加分。
+          计数仅保存在当前进程内存中，重启或修改缓存策略后清零；账号测试和定时监控不参与统计。
+        </p>
+      </el-form>
+    </el-card>
   </div>
 </template>
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
+import type { FormInstance, FormRules } from 'element-plus';
 import { CopyDocument } from '@element-plus/icons-vue';
 import { settingsApi, type Settings } from '../../api/settings';
 import { invoke, isTauri } from '@tauri-apps/api/core';
@@ -85,6 +176,13 @@ const form = reactive<Settings>({
   upstream_timeout_seconds: 300,
   first_token_timeout_seconds: 60,
   request_retry_attempts: 10,
+  first_token_timeout_priority_penalty: 1,
+  upstream_timeout_priority_penalty: 1,
+  request_failure_priority_penalty: 2,
+  low_cache_priority_enabled: false,
+  low_cache_consecutive: 5,
+  low_cache_threshold_percent: 85,
+  low_cache_priority_penalty: 3,
   upstream_proxy_enabled: false,
   upstream_proxy_url: 'http://127.0.0.1:7890',
   monitoring_enabled: true,
@@ -96,6 +194,23 @@ const form = reactive<Settings>({
   launch_at_login: false,
 });
 const saving = ref(false);
+const priorityFormRef = ref<FormInstance>();
+const penaltyRule = {
+  type: 'integer' as const,
+  required: true,
+  min: 1,
+  max: 3,
+  message: '请输入 1 到 3 的整数',
+  trigger: 'change',
+};
+const priorityRules: FormRules<Settings> = {
+  first_token_timeout_priority_penalty: [penaltyRule],
+  upstream_timeout_priority_penalty: [penaltyRule],
+  request_failure_priority_penalty: [penaltyRule],
+  low_cache_priority_penalty: [penaltyRule],
+  low_cache_consecutive: [{ ...penaltyRule, max: 1000, message: '请输入 1 到 1000 的整数' }],
+  low_cache_threshold_percent: [{ ...penaltyRule, max: 100, message: '请输入 1 到 100 的整数' }],
+};
 const gatewayHost = computed(() => {
   const host = form.host.trim();
   return !host || host === '0.0.0.0' ? '127.0.0.1' : host;
@@ -123,6 +238,7 @@ const syncAutostart = async (desired: boolean) => {
 };
 
 const save = async () => {
+  if (!(await priorityFormRef.value?.validate().catch(() => false))) return;
   saving.value = true;
   try {
     await syncAutostart(form.launch_at_login);
@@ -150,6 +266,27 @@ const copyAddress = async (name: string, address: string) => {
 <style scoped lang="scss">
 .settings-form {
   max-width: 1180px;
+}
+
+.priority-card {
+  margin-top: 16px;
+}
+
+.priority-card :deep(.el-form-item__label) {
+  white-space: nowrap;
+}
+
+.priority-row {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 32px;
+}
+
+.priority-help {
+  margin: 0 0 0 155px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .settings-grid {

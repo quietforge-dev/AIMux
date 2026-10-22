@@ -5,6 +5,22 @@ pub fn validate(settings: &Settings) -> Result<(), String> {
     if settings.port == 0 {
         return Err("端口必须大于 0".into());
     }
+    for (name, penalty) in [
+        ("首字超时", settings.first_token_timeout_priority_penalty),
+        ("上游超时", settings.upstream_timeout_priority_penalty),
+        ("请求失败", settings.request_failure_priority_penalty),
+        ("低缓存率", settings.low_cache_priority_penalty),
+    ] {
+        if !(1..=3).contains(&penalty) {
+            return Err(format!("{name}优先级扣减数必须为 1 到 3"));
+        }
+    }
+    if !(1..=1000).contains(&settings.low_cache_consecutive) {
+        return Err("连续低缓存次数必须为 1 到 1000".into());
+    }
+    if !(1..=100).contains(&settings.low_cache_threshold_percent) {
+        return Err("缓存率阈值必须为 1 到 100%".into());
+    }
     if !(2..=10).contains(&settings.monitoring_interval_minutes) {
         return Err("检测间隔必须为 2 到 10 分钟".into());
     }
@@ -75,4 +91,43 @@ pub async fn update_monitoring(
         .map_err(|error| AppError::Internal(format!("保存账号监控设置失败：{error}")))?;
     *current = next.clone();
     Ok(next)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn priority_penalties_accept_only_one_to_three() {
+        for value in [0, 1, 2, 3, 4] {
+            for field in 0..4 {
+                let mut settings = Settings::default();
+                match field {
+                    0 => settings.first_token_timeout_priority_penalty = value,
+                    1 => settings.upstream_timeout_priority_penalty = value,
+                    2 => settings.request_failure_priority_penalty = value,
+                    _ => settings.low_cache_priority_penalty = value,
+                }
+                assert_eq!(validate(&settings).is_ok(), (1..=3).contains(&value));
+            }
+        }
+    }
+
+    #[test]
+    fn validates_low_cache_bounds() {
+        for value in [0, 1, 1000, 1001] {
+            let settings = Settings {
+                low_cache_consecutive: value,
+                ..Settings::default()
+            };
+            assert_eq!(validate(&settings).is_ok(), (1..=1000).contains(&value));
+        }
+        for value in [0, 1, 85, 100, 101] {
+            let settings = Settings {
+                low_cache_threshold_percent: value,
+                ..Settings::default()
+            };
+            assert_eq!(validate(&settings).is_ok(), (1..=100).contains(&value));
+        }
+    }
 }

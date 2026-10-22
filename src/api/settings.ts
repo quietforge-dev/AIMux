@@ -5,6 +5,13 @@ export type Settings = {
   upstream_timeout_seconds: number;
   first_token_timeout_seconds: number;
   request_retry_attempts: number;
+  first_token_timeout_priority_penalty: number;
+  upstream_timeout_priority_penalty: number;
+  request_failure_priority_penalty: number;
+  low_cache_priority_enabled: boolean;
+  low_cache_consecutive: number;
+  low_cache_threshold_percent: number;
+  low_cache_priority_penalty: number;
   upstream_proxy_enabled: boolean;
   upstream_proxy_url: string;
   monitoring_enabled: boolean;
