@@ -136,7 +136,9 @@
               输出: {{ formatToken(row.output_tokens) }} / 合计:
               {{ formatToken(row.total_tokens) }}
             </div>
-            <div>缓存率: {{ formatCacheRate(row) }}</div>
+            <div>
+              缓存率: <span :class="cacheRateClass(row)">{{ formatCacheRate(row) }}</span>
+            </div>
           </div>
         </template>
       </el-table-column>
@@ -323,6 +325,13 @@ const failureReason = (record: UsageRecord) => {
   return details.join(' / ') || '未记录失败原因';
 };
 const formatCacheRate = (record: UsageRecord) => formatPercentage(cacheRate(record));
+const cacheRateClass = (record: UsageRecord) => {
+  const rate = cacheRate(record);
+  if (rate == null) return '';
+  if (rate < 0.5) return 'failure-text';
+  if (rate >= 0.51 && rate <= 0.85) return 'warning-text';
+  return '';
+};
 
 let refreshTimer: ReturnType<typeof setInterval> | undefined;
 
