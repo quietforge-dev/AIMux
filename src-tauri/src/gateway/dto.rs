@@ -133,6 +133,9 @@ pub fn stream_outcome(bytes: &[u8]) -> Option<bool> {
         let Ok(value) = serde_json::from_str::<Value>(data) else {
             continue;
         };
+        if value.get("error").is_some_and(|error| !error.is_null()) {
+            return Some(false);
+        }
         if let Some(event) = event_name {
             match event {
                 "response.completed" | "message_stop" => return Some(true),
@@ -154,6 +157,36 @@ pub fn stream_outcome(bytes: &[u8]) -> Option<bool> {
     None
 }
 
+pub fn stream_failure_message(bytes: &[u8]) -> String {
+    for line in String::from_utf8_lossy(bytes).lines() {
+        let data = line.trim().strip_prefix("data:").unwrap_or(line).trim();
+        let Ok(value) = serde_json::from_str::<Value>(data) else {
+            continue;
+        };
+        for path in [
+            "/error/message",
+            "/response/error/message",
+            "/response/incomplete_details/reason",
+            "/incomplete_details/reason",
+        ] {
+            if let Some(message) = value.pointer(path).and_then(Value::as_str) {
+                return format!(
+                    "上游流式响应未成功完成：{}",
+                    message.chars().take(500).collect::<String>()
+                );
+            }
+        }
+        if matches!(
+            value.get("type").and_then(Value::as_str),
+            Some("error" | "response.failed" | "response.incomplete" | "response.cancelled")
+        ) {
+            let kind = value["type"].as_str().unwrap_or("error");
+            return format!("上游流式响应未成功完成：{kind}");
+        }
+    }
+    "上游返回流式失败事件".into()
+}
+
 fn merge_usage(
     target: &mut (Option<i64>, Option<i64>, Option<i64>, Option<i64>),
     current: (Option<i64>, Option<i64>, Option<i64>, Option<i64>),
@@ -169,5 +202,24 @@ fn merge_usage(
     }
     if current.3.is_some() {
         target.3 = current.3;
+    }
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+
+    #[test]
+    fn preserves_failure_reason_even_after_http_success() {
+        let response = b"data: {\"type\":\"response.incomplete\",\"response\":{\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n";
+        assert_eq!(stream_outcome(response), Some(false));
+        assert!(stream_failure_message(response).contains("max_output_tokens"));
+        let response = b"data: {\"error\":{\"message\":\"quota exceeded\"}}\n\n";
+        assert_eq!(stream_outcome(response), Some(false));
+        assert!(stream_failure_message(response).contains("quota exceeded"));
+        assert_eq!(
+            stream_outcome(b"data: {\"error\":null}\n\ndata: [DONE]\n\n"),
+            Some(true)
+        );
     }
 }

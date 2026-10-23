@@ -233,6 +233,7 @@ async fn wait_for_first_token(
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"));
     let mut pending = Vec::new();
+    let mut received = 0;
     loop {
         let remaining = MONITOR_REQUEST_TIMEOUT
             .checked_sub(started.elapsed())
@@ -240,14 +241,41 @@ async fn wait_for_first_token(
         let chunk = tokio::time::timeout(remaining, response.chunk())
             .await
             .map_err(|_| "等待监控流式首字超时".to_owned())?
-            .map_err(|error| format!("读取监控流失败：{error}"))?
-            .ok_or_else(|| "监控流在返回首字前结束".to_owned())?;
-        if !is_sse && !chunk.is_empty() {
-            return Ok(());
-        }
+            .map_err(|error| format!("读取监控流失败：{error}"))?;
+        let Some(chunk) = chunk else {
+            if let Ok(event) = serde_json::from_slice::<serde_json::Value>(&pending) {
+                if let Some(result) = probe_event_result(&event) {
+                    return result;
+                }
+            }
+            // Some relays omit the final newline from the last SSE event.
+            let tail = String::from_utf8_lossy(&pending);
+            if let Some(data) = tail.trim().strip_prefix("data:") {
+                if let Ok(event) = serde_json::from_str::<serde_json::Value>(data.trim()) {
+                    if let Some(result) = probe_event_result(&event) {
+                        return result;
+                    }
+                }
+            }
+            return Err("监控响应结束，但未识别到文本内容".into());
+        };
+        received += chunk.len();
         pending.extend_from_slice(&chunk);
-        if pending.len() > 256 * 1024 {
+        if received > 256 * 1024 {
             return Err("监控流数据超过限制且未返回首字".into());
+        }
+        if !is_sse
+            && pending
+                .iter()
+                .copied()
+                .find(|byte| !byte.is_ascii_whitespace())
+                == Some(b'{')
+        {
+            if let Ok(event) = serde_json::from_slice::<serde_json::Value>(&pending) {
+                return probe_event_result(&event)
+                    .unwrap_or_else(|| Err("上游返回 JSON，但未包含可识别的文本内容".into()));
+            }
+            continue;
         }
         while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
             let line = String::from_utf8_lossy(&pending[..newline])
@@ -263,25 +291,33 @@ async fn wait_for_first_token(
             let Ok(event) = serde_json::from_str::<serde_json::Value>(data) else {
                 continue;
             };
-            if stream_event_has_text(&event) {
-                return Ok(());
-            }
-            if event.get("error").is_some()
-                || matches!(
-                    event.get("type").and_then(serde_json::Value::as_str),
-                    Some(
-                        "error"
-                            | "response.failed"
-                            | "response.completed"
-                            | "response.incomplete"
-                            | "message_stop"
-                    )
-                )
-            {
-                return Err("监控流未返回文本内容".into());
+            if let Some(result) = probe_event_result(&event) {
+                return result;
             }
         }
     }
+}
+
+fn probe_event_result(event: &serde_json::Value) -> Option<Result<(), String>> {
+    let bytes = serde_json::to_vec(event).unwrap_or_default();
+    if crate::gateway::dto::stream_outcome(&bytes) == Some(false) {
+        return Some(Err(crate::gateway::dto::stream_failure_message(&bytes)));
+    }
+    if stream_event_has_text(event) {
+        return Some(Ok(()));
+    }
+    let finish = event
+        .pointer("/choices/0/finish_reason")
+        .and_then(serde_json::Value::as_str);
+    if finish == Some("length") {
+        return Some(Err(
+            "监控生成额度耗尽但没有可见文本（可能仅生成了推理内容）".into(),
+        ));
+    }
+    if finish.is_some() || crate::gateway::dto::stream_outcome(&bytes) == Some(true) {
+        return Some(Err("监控响应正常结束，但未返回可识别的文本内容".into()));
+    }
+    None
 }
 
 fn stream_event_has_text(event: &serde_json::Value) -> bool {
@@ -307,13 +343,62 @@ fn stream_event_has_text(event: &serde_json::Value) -> bool {
         .pointer("/content_block/text")
         .and_then(serde_json::Value::as_str)
         .is_some_and(|text| !text.is_empty());
-    openai_chat || openai_responses || anthropic || initial_text
+    let json_chat = event
+        .pointer("/choices/0/message/content")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|text| !text.is_empty());
+    let text_parts = event
+        .get("content")
+        .or_else(|| event.pointer("/message/content"))
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|parts| {
+            parts.iter().any(|part| {
+                part.get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|text| !text.is_empty())
+            })
+        });
+    let completion_text = event
+        .pointer("/choices/0/text")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|text| !text.is_empty());
+    openai_chat
+        || openai_responses
+        || anthropic
+        || initial_text
+        || json_chat
+        || text_parts
+        || completion_text
 }
 
 #[cfg(test)]
 mod probe_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn differentiates_empty_budget_exhaustion_upstream_error_and_json_content() {
+        assert!(probe_event_result(
+            &json!({"choices":[{"message":{"content":"OK"},"finish_reason":"length"}]})
+        )
+        .unwrap()
+        .is_ok());
+        assert!(
+            probe_event_result(&json!({"content":[{"type":"text","text":"OK"}]}))
+                .unwrap()
+                .is_ok()
+        );
+        let error = probe_event_result(&json!({"choices":[{"delta":{},"finish_reason":"length"}]}))
+            .unwrap()
+            .unwrap_err();
+        assert!(error.contains("额度耗尽"));
+        let error = probe_event_result(&json!({"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}})).unwrap().unwrap_err();
+        assert!(error.contains("max_output_tokens"));
+        assert!(probe_event_result(
+            &json!({"error":null,"choices":[{"delta":{"role":"assistant"}}]})
+        )
+        .is_none());
+    }
 
     #[test]
     fn ignores_keepalive_role_and_reasoning_events() {
@@ -359,6 +444,17 @@ mod probe_tests {
 
     #[tokio::test]
     async fn reads_fragmented_sse_and_rejects_empty_and_error_streams() {
+        for body in [
+            "data: {\"choices\":[{\"delta\":{\"content\":\"OK\"}}]}",
+            "{\"choices\":[{\"message\":{\"content\":\"OK\"}}]}",
+        ] {
+            let mut response = probe_response(vec![body]).await;
+            assert!(
+                wait_for_first_token(&mut response, std::time::Instant::now())
+                    .await
+                    .is_ok()
+            );
+        }
         let mut response = probe_response(vec![
             ": keepalive\n\ndata: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n",
             "data: {\"choices\":[{\"delta\":{\"con",

@@ -12,11 +12,11 @@
         <el-menu-item index="/usage"
           ><el-icon><Tickets /></el-icon>使用记录</el-menu-item
         >
-        <el-menu-item index="/statistics"
-          ><el-icon><DataAnalysis /></el-icon>数据统计</el-menu-item
-        >
         <el-menu-item index="/monitor"
           ><el-icon><Monitor /></el-icon>监控管理</el-menu-item
+        >
+        <el-menu-item index="/statistics"
+          ><el-icon><DataAnalysis /></el-icon>数据统计</el-menu-item
         >
         <el-menu-item index="/multiplier-monitor"
           ><el-icon><TrendCharts /></el-icon>倍率监控</el-menu-item

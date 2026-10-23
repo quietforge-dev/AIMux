@@ -58,6 +58,8 @@ fn build_request_with_stream(
     });
     if stream {
         body["stream"] = serde_json::Value::Bool(true);
+        // Leave room for reasoning before visible output; the probe stops at first text.
+        body["max_tokens"] = serde_json::json!(256);
     }
     AccountProbe {
         model: model.to_owned(),

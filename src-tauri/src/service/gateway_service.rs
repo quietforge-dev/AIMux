@@ -302,9 +302,11 @@ pub async fn forward(
                 let mut captured = first_chunk.to_vec();
                 let mut stream_error = None;
                 let mut upstream_timed_out = false;
+                let mut downstream_failed = false;
                 let mut stream_complete = false;
                 let sent = tokio::time::timeout(stream_timeout, tx.send(Ok(first_chunk))).await;
                 if !matches!(sent, Ok(Ok(()))) {
+                    downstream_failed = true;
                     stream_error = Some("下游客户端已断开或读取超时".to_owned());
                 }
                 if stream_error.is_none() {
@@ -312,7 +314,7 @@ pub async fn forward(
                         if outcome {
                             stream_complete = true;
                         } else {
-                            stream_error = Some("上游返回流式失败事件".to_owned());
+                            stream_error = Some(dto::stream_failure_message(&captured));
                         }
                     }
                 }
@@ -324,12 +326,13 @@ pub async fn forward(
                             let sent =
                                 tokio::time::timeout(stream_timeout, tx.send(Ok(chunk))).await;
                             if !matches!(sent, Ok(Ok(()))) {
+                                downstream_failed = true;
                                 stream_error = Some("下游客户端已断开或读取超时".to_owned());
                                 break;
                             }
                             if let Some(outcome) = dto::stream_outcome(&captured) {
                                 if !outcome {
-                                    stream_error = Some("上游返回流式失败事件".to_owned());
+                                    stream_error = Some(dto::stream_failure_message(&captured));
                                 }
                                 break;
                             }
@@ -356,6 +359,8 @@ pub async fn forward(
                 let error_message = stream_error.as_deref();
                 let error_code = if success {
                     None
+                } else if downstream_failed {
+                    Some("client_disconnected")
                 } else if upstream_timed_out {
                     Some("upstream_timeout")
                 } else {
@@ -450,14 +455,16 @@ pub async fn forward(
                         .lock()
                         .await
                         .reset(cache_ticket.as_ref());
-                    let _ = account_service::record_failure(
-                        &pool_for_stream,
-                        &account_for_stream.id,
-                        &settings_for_stream,
-                        error_code,
-                        error_message,
-                    )
-                    .await;
+                    if !success && !downstream_failed {
+                        let _ = account_service::record_failure(
+                            &pool_for_stream,
+                            &account_for_stream.id,
+                            &settings_for_stream,
+                            error_code,
+                            error_message,
+                        )
+                        .await;
+                    }
                 }
             });
             let streamed: futures_util::stream::BoxStream<
