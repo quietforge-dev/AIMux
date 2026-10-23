@@ -239,7 +239,7 @@ pub async fn recent_cache_rates_by_account(
     .await?)
 }
 pub async fn cleanup(pool: &SqlitePool, cutoff: &str) -> Result<i64, AppError> {
-    let r = sqlx::query("DELETE FROM usage_records WHERE started_at < ?")
+    let r = sqlx::query("DELETE FROM usage_records WHERE started_at < ? AND NOT(stream=1 AND ended_at IS NULL) AND EXISTS (SELECT 1 FROM daily_usage_statistics d WHERE usage_records.started_at>=d.started_at AND usage_records.started_at<d.ended_at)")
         .bind(cutoff)
         .execute(pool)
         .await?;

@@ -83,5 +83,6 @@ pub async fn cleanup(pool: &SqlitePool, days: i64) -> Result<i64, AppError> {
     if !matches!(days, 7 | 30 | 90) {
         return Err(AppError::BadRequest("清理天数只支持 7、30 或 90 天".into()));
     }
+    super::daily_statistics_service::catch_up(pool, chrono::Local::now()).await?;
     usage_dao::cleanup(pool, &utc_days_ago_string(days)).await
 }

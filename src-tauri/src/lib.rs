@@ -62,6 +62,8 @@ pub fn run() {
         }
     };
     let shared = Arc::new(state);
+    let statistics_state = Arc::clone(&shared);
+    runtime.spawn(background::daily_statistics_task::run(statistics_state));
     let account_status_state = Arc::clone(&shared);
     runtime.spawn(async move {
         background::account_status_task::run(account_status_state).await;
@@ -168,6 +170,8 @@ pub fn run_gateway() -> Result<(), String> {
         .block_on(async { AppState::initialize(settings).await })
         .map_err(|error| format!("初始化 AIMux 失败: {error}"))?;
     let shared = Arc::new(state);
+    let statistics_state = Arc::clone(&shared);
+    runtime.spawn(background::daily_statistics_task::run(statistics_state));
     let account_status_state = Arc::clone(&shared);
     runtime.spawn(async move {
         background::account_status_task::run(account_status_state).await;

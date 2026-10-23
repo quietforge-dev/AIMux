@@ -1,10 +1,10 @@
 use crate::{
-    dao::{account_dao, usage_dao},
+    dao::{account_dao, daily_statistics_dao, usage_dao},
     error::AppError,
     schema::usage_schema::TokenSummary,
     utils::time::{local_today_utc_range, utc_datetime_string},
 };
-use chrono::{Duration, Utc};
+use chrono::{Local, Utc};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 
@@ -12,9 +12,23 @@ const RECENT_CACHE_RATE_RECORD_LIMIT: i64 = 20;
 
 pub async fn tokens(pool: &SqlitePool) -> Result<serde_json::Value, AppError> {
     let (start_today, end_today) = local_today_utc_range();
-    let start_yesterday = start_today - Duration::days(1);
-    let total = range(pool, None, None).await?;
-    let yesterday = range(pool, Some(start_yesterday), Some(start_today)).await?;
+    let yesterday_date = start_today
+        .with_timezone(&Local)
+        .date_naive()
+        .pred_opt()
+        .ok_or_else(|| AppError::Internal("昨日日期无效".into()))?;
+    let (start_yesterday, end_yesterday) =
+        super::daily_statistics_service::day_range(&Local, yesterday_date)?;
+    let (a, b, c, d) = daily_statistics_dao::total(pool).await?;
+    let total = summary(a, b, c, d);
+    let (a, b, c, d) = daily_statistics_dao::day(
+        pool,
+        &yesterday_date.to_string(),
+        &utc_datetime_string(start_yesterday),
+        &utc_datetime_string(end_yesterday),
+    )
+    .await?;
+    let yesterday = summary(a, b, c, d);
     let today_summary = range(pool, Some(start_today), Some(end_today)).await?;
     let (accounts, _) = account_dao::list(pool, 0, 10000, None, Some("active"), None).await?;
     let mut account_summaries = range_for_accounts(pool, start_today, end_today).await?;

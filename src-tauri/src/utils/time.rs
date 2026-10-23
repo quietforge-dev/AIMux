@@ -28,10 +28,21 @@ pub fn local_today_utc_range() -> (DateTime<Utc>, DateTime<Utc>) {
     let today = Local::now().date_naive();
     let start = Local
         .from_local_datetime(&today.and_hms_opt(0, 0, 0).expect("本地日期必须有效"))
-        .single()
-        .expect("本地日期开始时间必须唯一")
+        .earliest()
+        .expect("本地日期开始时间必须有效")
         .with_timezone(&Utc);
-    (start, start + Duration::days(1))
+    let end = Local
+        .from_local_datetime(
+            &today
+                .succ_opt()
+                .expect("次日日期必须有效")
+                .and_hms_opt(0, 0, 0)
+                .expect("本地日期必须有效"),
+        )
+        .earliest()
+        .expect("本地日期结束时间必须有效")
+        .with_timezone(&Utc);
+    (start, end)
 }
 
 pub fn elapsed_millis(started: Instant) -> i64 {
