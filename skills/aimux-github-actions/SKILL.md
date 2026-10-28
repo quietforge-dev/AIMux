@@ -5,7 +5,7 @@ description: AIMux GitHub Actions 跨平台 Rust/Tauri 构建规范。配置、�
 
 # AIMux GitHub Actions
 
-workflow 位于 `.github/workflows/build-release.yml`，构建 Windows x64/arm64 NSIS 安装包和 macOS x64/arm64 App ZIP。构建使用 Node.js、Rust stable、npm 和 Tauri CLI。
+workflow 位于 `.github/workflows/build-release.yml`，构建 Windows x64/arm64 NSIS 安装包和 macOS arm64 App ZIP，不再构建 macOS x64。构建使用 Node.js、Rust stable、npm 和 Tauri CLI。
 
 Windows/macOS 的每个架构都缓存 Cargo registry 和 Cargo git 依赖，但不缓存 `src-tauri/target`。每次发布都从当前源码重新生成 Rust 二进制和安装包，避免陈旧构建产物进入 Release；首次下载依赖后，后续构建仍会复用已缓存的依赖。
 
@@ -22,7 +22,6 @@ Windows x64 构建会在上传前将 NSIS 安装包静默安装到 runner 临时
 
 - `AIMux-Windows-x64.exe`
 - `AIMux-Windows-arm64.exe`
-- `AIMux-macOS-x64.zip`
 - `AIMux-macOS-arm64.zip`
 
 workflow 不读取或上传用户数据目录中的数据库、配置和密钥。当前没有 Apple 公证或 Windows 代码签名，构建成功不等于获得系统信任。

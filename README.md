@@ -32,9 +32,9 @@ AIMux 的核心是多账号路由：把多个上游 Key（官方直连或中转�
 | 系统 | Intel / x64 | ARM |
 | --- | --- | --- |
 | Windows | `AIMux-Windows-x64.exe` | `AIMux-Windows-arm64.exe` |
-| macOS | `AIMux-macOS-x64.zip` | `AIMux-macOS-arm64.zip` |
+| macOS | 不再提供新版本 | `AIMux-macOS-arm64.zip` |
 
-macOS：Intel 芯片选择 x64，Apple 芯片（M1/M2/M3/M4 等）选择 arm64。解压后，**建议先将 AIMux.app 从“下载”目录拖到“应用程序（Applications）”目录，再打开应用**。首次打开从 GitHub 下载的未签名应用，如果提示“应用已损坏”，确认安装包来源可信后，在终端执行：
+macOS：新版仅支持 Apple 芯片（arm64），Intel 芯片用户可继续使用历史版本。解压后，**建议先将 AIMux.app 从“下载”目录拖到“应用程序（Applications）”目录，再打开应用**。首次打开从 GitHub 下载的未签名应用，如果提示“应用已损坏”，确认安装包来源可信后，在终端执行：
 
 ```bash
 xattr -cr /Applications/AIMux.app

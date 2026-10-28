@@ -124,8 +124,6 @@ jobs:
         include:
           - arch: arm64
             runner: macos-15
-          - arch: x64
-            runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
@@ -225,7 +223,6 @@ jobs:
           base_url="https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}"
           windows_x64_sig=$(tr -d '\r\n' < release-assets/AIMux-Windows-x64.exe.sig)
           windows_arm64_sig=$(tr -d '\r\n' < release-assets/AIMux-Windows-arm64.exe.sig)
-          macos_x64_sig=$(tr -d '\r\n' < release-assets/AIMux-macOS-x64.app.tar.gz.sig)
           macos_arm64_sig=$(tr -d '\r\n' < release-assets/AIMux-macOS-arm64.app.tar.gz.sig)
           cat > release-assets/latest.json <<EOF
           {
@@ -235,7 +232,6 @@ jobs:
             "platforms": {
               "windows-x86_64": { "signature": "${windows_x64_sig}", "url": "${base_url}/AIMux-Windows-x64.exe" },
               "windows-aarch64": { "signature": "${windows_arm64_sig}", "url": "${base_url}/AIMux-Windows-arm64.exe" },
-              "darwin-x86_64": { "signature": "${macos_x64_sig}", "url": "${base_url}/AIMux-macOS-x64.app.tar.gz" },
               "darwin-aarch64": { "signature": "${macos_arm64_sig}", "url": "${base_url}/AIMux-macOS-arm64.app.tar.gz" }
             }
           }
