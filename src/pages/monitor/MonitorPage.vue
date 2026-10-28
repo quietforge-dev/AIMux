@@ -154,7 +154,8 @@
               class="check"
               :class="cellClass(record)"
               :title="cellTitle(record)"
-            />
+              >{{ cellDuration(record) }}</span
+            >
           </div>
         </template>
       </el-table-column>
@@ -348,6 +349,14 @@ const cellClass = (record: MonitorRecord | null) => {
   return (record.duration_ms ?? 0) > SLOW_THRESHOLD ? 'slow' : 'ok';
 };
 
+const cellDuration = (record: MonitorRecord | null) => {
+  if (!record) return '';
+  if (record.duration_ms == null) return '—';
+  const seconds = record.duration_ms / 1000;
+  const rounded = Math.round(seconds);
+  return rounded >= 100 ? '99+' : String(rounded);
+};
+
 const cellTitle = (record: MonitorRecord | null) => {
   if (!record) return '暂无监控记录';
   const result = record.success ? '成功' : '失败';
@@ -406,10 +415,18 @@ onUnmounted(() => {
 }
 
 .check {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 20px;
   height: 20px;
   border-right: 1px solid white;
+  color: #fff;
+  font-family: Arial, sans-serif;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .empty {
@@ -426,6 +443,7 @@ onUnmounted(() => {
 
 .slow {
   background: #e0a800;
+  color: #303133;
 }
 
 .check:first-child {
