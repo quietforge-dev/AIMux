@@ -46,6 +46,11 @@
           :disabled="savingConfig || loading"
           @change="changeOptions"
         />
+        <el-switch
+          v-model="showCheckDuration"
+          active-text="显示耗时"
+          @change="persistShowCheckDuration"
+        />
         <span v-if="savingOptions" class="range-label">正在保存...</span>
         <el-button :loading="loading" :disabled="savingConfig" @click="load">刷新</el-button>
         <el-button :disabled="!hasCustomWidths" @click="resetColumnWidths">恢复默认列宽</el-button>
@@ -154,7 +159,7 @@
               class="check"
               :class="cellClass(record)"
               :title="cellTitle(record)"
-              >{{ cellDuration(record) }}</span
+              >{{ showCheckDuration ? cellDuration(record) : '' }}</span
             >
           </div>
         </template>
@@ -177,6 +182,8 @@ const { tableKey, hasCustomWidths, columnWidth, handleColumnResize, resetColumnW
 const intervalMinutes = ref(2);
 const recentCount = ref<number | undefined>(30);
 const displayCount = ref(30);
+const showCheckDuration = ref(false);
+const CHECK_DURATION_DISPLAY_KEY = 'aimux.monitor.show-check-duration';
 const savingOptions = ref(false);
 const savingConfig = computed(
   () => savingEnabled.value || savingRange.value || savingOptions.value,
@@ -211,6 +218,10 @@ const load = async () => {
   } finally {
     loading.value = false;
   }
+};
+
+const persistShowCheckDuration = (value: string | number | boolean) => {
+  window.localStorage.setItem(CHECK_DURATION_DISPLAY_KEY, String(Boolean(value)));
 };
 
 const toTime = (value?: string | null) => {
@@ -367,6 +378,7 @@ const cellTitle = (record: MonitorRecord | null) => {
 };
 
 onMounted(() => {
+  showCheckDuration.value = window.localStorage.getItem(CHECK_DURATION_DISPLAY_KEY) === 'true';
   load();
   timer = window.setInterval(load, 30_000);
 });
