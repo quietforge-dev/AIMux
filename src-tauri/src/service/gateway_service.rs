@@ -17,7 +17,7 @@ use crate::{
     gateway::dto,
     model::usage_record::UsageRecord,
     service::{account_service, model_service, scheduler_service},
-    upstream::error::response_body,
+    upstream::{error::response_body, first_token::FirstTokenDeadline},
     utils::time::{elapsed_millis, utc_datetime_string, utc_now_string},
 };
 
@@ -61,6 +61,14 @@ pub async fn forward(
             }
         }
         let started = Instant::now();
+        let stream_requested = upstream_body
+            .get("stream")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let first_token_deadline = FirstTokenDeadline::from_start(
+            started,
+            Duration::from_secs(settings.first_token_timeout_seconds.max(1)),
+        );
         let passthrough = crate::gateway::auth::passthrough(
             &headers,
             if kind == "anthropic" {
@@ -72,15 +80,34 @@ pub async fn forward(
                 &["openai-beta", "idempotency-key"]
             },
         );
-        let response = match crate::upstream::client::post(
-            &account,
-            endpoint,
-            &upstream_body,
-            settings,
-            &passthrough,
-        )
-        .await
-        {
+        let mut first_token_timeout = false;
+        let response = match if stream_requested {
+            match first_token_deadline
+                .run(crate::upstream::client::post(
+                    &account,
+                    endpoint,
+                    &upstream_body,
+                    settings,
+                    &passthrough,
+                ))
+                .await
+            {
+                Ok(result) => result,
+                Err(_) => {
+                    first_token_timeout = true;
+                    Err(AppError::UpstreamTimeout("等待上游首字超时".into()))
+                }
+            }
+        } else {
+            crate::upstream::client::post(
+                &account,
+                endpoint,
+                &upstream_body,
+                settings,
+                &passthrough,
+            )
+            .await
+        } {
             Ok(value) => value,
             Err(error) => {
                 cache_priority.lock().await.reset(cache_ticket.as_ref());
@@ -92,18 +119,20 @@ pub async fn forward(
                     %error,
                     "网关上游请求失败"
                 );
+                let error_code = if first_token_timeout {
+                    "first_token_timeout"
+                } else if matches!(error, AppError::UpstreamTimeout(_)) {
+                    "upstream_timeout"
+                } else {
+                    "upstream_connection_error"
+                };
                 last = (
-                    if matches!(error, AppError::UpstreamTimeout(_)) {
+                    if first_token_timeout || matches!(error, AppError::UpstreamTimeout(_)) {
                         StatusCode::GATEWAY_TIMEOUT
                     } else {
                         StatusCode::BAD_GATEWAY
                     },
-                    if matches!(error, AppError::UpstreamTimeout(_)) {
-                        "upstream_timeout"
-                    } else {
-                        "upstream_connection_error"
-                    }
-                    .into(),
+                    error_code.into(),
                     error.to_string(),
                 );
                 record(
@@ -189,15 +218,10 @@ pub async fn forward(
             pause_before_retry(attempt, max_attempts, &trace_id).await;
             continue;
         }
-        if upstream_body
-            .get("stream")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
+        if stream_requested {
             let mut upstream = response.bytes_stream();
-            let first_chunk_timeout =
-                Duration::from_secs(settings.first_token_timeout_seconds.max(1));
-            let first_chunk = match wait_for_first_chunk(&mut upstream, first_chunk_timeout).await {
+            let first_chunk = match wait_for_first_chunk(&mut upstream, &first_token_deadline).await
+            {
                 Ok(chunk) => chunk,
                 Err(error) => {
                     cache_priority.lock().await.reset(cache_ticket.as_ref());
@@ -671,25 +695,53 @@ impl FirstChunkError {
 
 pub async fn wait_for_first_chunk<S, E>(
     upstream: &mut S,
-    timeout: Duration,
+    deadline: &FirstTokenDeadline,
 ) -> Result<Bytes, FirstChunkError>
 where
     S: Stream<Item = Result<Bytes, E>> + Unpin,
     E: std::fmt::Display,
 {
-    let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return Err(FirstChunkError::Timeout);
-        }
-        match tokio::time::timeout(remaining, upstream.next()).await {
+        match deadline.next(upstream).await {
             Ok(Some(Ok(chunk))) if chunk.is_empty() => continue,
             Ok(Some(Ok(chunk))) => return Ok(chunk),
             Ok(Some(Err(error))) => return Err(FirstChunkError::Upstream(error.to_string())),
             Ok(None) => return Err(FirstChunkError::Ended),
             Err(_) => return Err(FirstChunkError::Timeout),
         }
+    }
+}
+
+#[cfg(test)]
+mod first_chunk_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn expired_request_deadline_rejects_an_already_available_chunk() {
+        let mut upstream = futures_util::stream::iter([Ok::<_, &'static str>(Bytes::from_static(
+            b"data: first token",
+        ))]);
+        let deadline = FirstTokenDeadline::from_start(
+            Instant::now() - Duration::from_millis(1),
+            Duration::ZERO,
+        );
+
+        assert!(matches!(
+            wait_for_first_chunk(&mut upstream, &deadline).await,
+            Err(FirstChunkError::Timeout)
+        ));
+    }
+
+    #[tokio::test]
+    async fn first_nonempty_chunk_before_deadline_is_returned() {
+        let expected = Bytes::from_static(b"data: first token");
+        let mut upstream =
+            futures_util::stream::iter([Ok::<_, &'static str>(Bytes::new()), Ok(expected.clone())]);
+
+        let deadline = FirstTokenDeadline::from_start(Instant::now(), Duration::from_secs(1));
+        let result = wait_for_first_chunk(&mut upstream, &deadline).await;
+
+        assert_eq!(result.unwrap(), expected);
     }
 }
 

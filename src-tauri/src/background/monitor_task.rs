@@ -13,12 +13,11 @@ use crate::{
     dao::{account_dao, monitor_dao},
     model::{account::Account, monitor_record::MonitorRecord},
     service::{account_probe_service, account_service},
-    upstream::error::response_body,
+    upstream::{error::response_body, first_token::FirstTokenDeadline},
     utils::time::{elapsed_millis, utc_now_string},
 };
 
 const MONITOR_CONCURRENCY: usize = 5;
-const MONITOR_REQUEST_TIMEOUT: Duration = Duration::from_secs(40);
 
 pub async fn run(state: Arc<AppState>) {
     let mut ticker = interval(Duration::from_secs(5));
@@ -114,18 +113,36 @@ async fn monitor_account(
     let model = probe.model.clone();
     let started = std::time::Instant::now();
     let settings = state.settings.read().await.clone();
-    let result = match account_probe_service::send(
-        &account,
-        &probe,
-        &settings,
-        Some(MONITOR_REQUEST_TIMEOUT),
-    )
-    .await
+    let first_token_timeout = Duration::from_secs(settings.first_token_timeout_seconds.max(1));
+    let first_token_deadline = FirstTokenDeadline::from_start(started, first_token_timeout);
+    let result = match first_token_deadline
+        .run(account_probe_service::send(
+            &account,
+            &probe,
+            &settings,
+            Some(first_token_timeout),
+        ))
+        .await
     {
-        Ok(mut response) => {
+        Err(_) => (
+            false,
+            Some(504),
+            None,
+            Some("等待监控流式首字超时".to_owned()),
+        ),
+        Ok(Err(error)) => {
+            tracing::error!(account_id = %account.id, account_name = %account.name, %error, "账号监控连接失败");
+            let status = if matches!(error, crate::error::AppError::UpstreamTimeout(_)) {
+                504
+            } else {
+                502
+            };
+            (false, Some(status), None, Some(error.to_string()))
+        }
+        Ok(Ok(mut response)) => {
             let status = response.status();
             let (success, first_token_ms, message) = if status.is_success() {
-                match wait_for_first_token(&mut response, started).await {
+                match wait_for_first_token(&mut response, &first_token_deadline).await {
                     Ok(()) => (true, Some(elapsed_millis(started)), None),
                     Err(message) => (false, None, Some(message)),
                 }
@@ -155,10 +172,6 @@ async fn monitor_account(
                 first_token_ms,
                 message,
             )
-        }
-        Err(error) => {
-            tracing::error!(account_id = %account.id, account_name = %account.name, %error, "账号监控连接失败");
-            (false, Some(502), None, Some(error.to_string()))
         }
     };
     account_service::record_monitor(
@@ -225,7 +238,7 @@ fn random_probe_prompt() -> &'static str {
 
 async fn wait_for_first_token(
     response: &mut reqwest::Response,
-    started: std::time::Instant,
+    deadline: &FirstTokenDeadline,
 ) -> Result<(), String> {
     let is_sse = response
         .headers()
@@ -235,10 +248,8 @@ async fn wait_for_first_token(
     let mut pending = Vec::new();
     let mut received = 0;
     loop {
-        let remaining = MONITOR_REQUEST_TIMEOUT
-            .checked_sub(started.elapsed())
-            .ok_or_else(|| "等待监控流式首字超时".to_owned())?;
-        let chunk = tokio::time::timeout(remaining, response.chunk())
+        let chunk = deadline
+            .run(response.chunk())
             .await
             .map_err(|_| "等待监控流式首字超时".to_owned())?
             .map_err(|error| format!("读取监控流失败：{error}"))?;
@@ -449,11 +460,12 @@ mod probe_tests {
             "{\"choices\":[{\"message\":{\"content\":\"OK\"}}]}",
         ] {
             let mut response = probe_response(vec![body]).await;
-            assert!(
-                wait_for_first_token(&mut response, std::time::Instant::now())
-                    .await
-                    .is_ok()
-            );
+            assert!(wait_for_first_token(
+                &mut response,
+                &FirstTokenDeadline::from_start(std::time::Instant::now(), Duration::from_secs(1),),
+            )
+            .await
+            .is_ok());
         }
         let mut response = probe_response(vec![
             ": keepalive\n\ndata: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n",
@@ -461,22 +473,24 @@ mod probe_tests {
             "tent\":\"hello\"}}]}\n\n",
         ])
         .await;
-        assert!(
-            wait_for_first_token(&mut response, std::time::Instant::now())
-                .await
-                .is_ok()
-        );
+        assert!(wait_for_first_token(
+            &mut response,
+            &FirstTokenDeadline::from_start(std::time::Instant::now(), Duration::from_secs(1),),
+        )
+        .await
+        .is_ok());
         for parts in [
             vec!["data: [DONE]\n\n"],
             vec!["data: {\"error\":{\"message\":\"failed\"}}\n\n"],
             vec![": heartbeat\n\n"],
         ] {
             let mut response = probe_response(parts).await;
-            assert!(
-                wait_for_first_token(&mut response, std::time::Instant::now())
-                    .await
-                    .is_err()
-            );
+            assert!(wait_for_first_token(
+                &mut response,
+                &FirstTokenDeadline::from_start(std::time::Instant::now(), Duration::from_secs(1),),
+            )
+            .await
+            .is_err());
         }
     }
 }
