@@ -134,6 +134,22 @@
         <template #default="{ row }">{{ formatTime(latest(row.records)?.checked_at) }}</template>
       </el-table-column>
       <el-table-column
+        column-key="recentAverageThroughput"
+        label="近20次平均吞吐量"
+        :width="columnWidth('recentAverageThroughput', 155)"
+      >
+        <template #header>
+          <el-tooltip
+            content="按账号最近最多20条有效真实请求的吞吐量求算术平均；流式请求扣除首字耗时，缺少首字耗时或非流式时用总耗时，与使用记录口径一致。不足20条按实际条数计算，无有效记录显示 -"
+          >
+            <span>近20次平均吞吐量</span>
+          </el-tooltip>
+        </template>
+        <template #default="{ row }">
+          {{ formatThroughputValue(row.recent_average_throughput) }}
+        </template>
+      </el-table-column>
+      <el-table-column
         column-key="averageDuration"
         label="平均耗时"
         :width="columnWidth('averageDuration', 90)"
@@ -195,6 +211,7 @@ import { useModelsStore } from '../../stores/models';
 import ProviderLogo from '../../components/models/ProviderLogo.vue';
 import { ElMessage } from 'element-plus';
 import { useTableColumnWidths } from '../../composables/useTableColumnWidths';
+import { formatThroughputValue } from '../../utils/token';
 
 const { tableKey, hasCustomWidths, columnWidth, handleColumnResize, resetColumnWidths } =
   useTableColumnWidths('monitor');

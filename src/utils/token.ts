@@ -32,7 +32,10 @@ export const calculateThroughput = (record?: ThroughputSource | null): number | 
 };
 
 export const formatThroughput = (record?: ThroughputSource | null): string => {
-  const tps = calculateThroughput(record);
+  return formatThroughputValue(calculateThroughput(record));
+};
+
+export const formatThroughputValue = (tps?: number | null): string => {
   if (tps == null || !Number.isFinite(tps)) return '-';
   return `${tps.toFixed(1)} token/s`;
 };

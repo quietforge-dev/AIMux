@@ -15,6 +15,7 @@ export type MonitorItem = {
   multiplier: number;
   priority: number;
   monitor_average_duration_ms?: number;
+  recent_average_throughput?: number | null;
   records: MonitorRecord[];
   model?: string;
 };

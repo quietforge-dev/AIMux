@@ -1,5 +1,46 @@
 use crate::{error::AppError, model::usage_record::UsageRecord};
-use sqlx::SqlitePool;
+use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+
+pub async fn recent_average_throughputs(
+    pool: &SqlitePool,
+    account_ids: &[String],
+    limit_per_account: i64,
+) -> Result<Vec<(String, Option<f64>)>, AppError> {
+    let mut rows = Vec::new();
+    // 每个账号利用现有账号/时间索引取最近样本，避免扫描所有历史请求。
+    for ids in account_ids.chunks(400) {
+        let mut query = QueryBuilder::<Sqlite>::new(
+            r#"SELECT a.id, (
+                SELECT AVG(throughput) FROM (
+                    SELECT output_tokens * 1000.0 / (
+                        CASE WHEN stream = 1 AND first_token_ms IS NOT NULL
+                                  AND duration_ms > first_token_ms
+                             THEN duration_ms - first_token_ms
+                             ELSE duration_ms END
+                    ) AS throughput
+                    FROM usage_records
+                    WHERE account_id = a.id
+                      AND success = 1 AND ended_at IS NOT NULL AND ended_at <> ''
+                      AND output_tokens > 0 AND duration_ms > 0
+                    ORDER BY started_at DESC, id DESC
+                    LIMIT "#,
+        );
+        query.push_bind(limit_per_account.max(1));
+        query.push(") ) AS average_throughput FROM accounts a WHERE a.id IN (");
+        let mut separated = query.separated(",");
+        for id in ids {
+            separated.push_bind(id);
+        }
+        separated.push_unseparated(")");
+        rows.extend(
+            query
+                .build_query_as::<(String, Option<f64>)>()
+                .fetch_all(pool)
+                .await?,
+        );
+    }
+    Ok(rows)
+}
 
 struct UsageFilter<'a> {
     account_id: Option<&'a str>,
@@ -255,4 +296,204 @@ pub async fn fail_unfinished_streams(pool: &SqlitePool, ended_at: &str) -> Resul
     .execute(pool)
     .await?;
     Ok(result.rows_affected() as i64)
+}
+
+#[cfg(test)]
+mod throughput_tests {
+    use super::*;
+
+    async fn pool() -> SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql(include_str!("../../migrations/0001_baseline.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        for id in ["a", "b"] {
+            sqlx::query("INSERT INTO accounts(id,name,type,base_url,api_key_encrypted,status,priority,multiplier,total_requests,total_tokens,created_at,updated_at) VALUES(?,?,'openai','https://example.com','','active',5,0.1,0,0,'2026-11-02','2026-11-02')")
+                .bind(id).bind(id).execute(&pool).await.unwrap();
+        }
+        pool
+    }
+
+    async fn insert(
+        pool: &SqlitePool,
+        id: &str,
+        output: Option<i64>,
+        duration: Option<i64>,
+        first: Option<i64>,
+        stream: bool,
+        success: bool,
+        ended: Option<&str>,
+    ) {
+        sqlx::query("INSERT INTO usage_records(id,trace_id,account_id,started_at,ended_at,stream,success,attempts,output_tokens,duration_ms,first_token_ms) VALUES(?,?,'a','2026-11-02T01:00:00Z',?,?,?,1,?,?,?)")
+            .bind(id).bind(id).bind(ended).bind(stream).bind(success)
+            .bind(output).bind(duration).bind(first).execute(pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn averages_individual_rates_and_matches_usage_fallbacks() {
+        let pool = pool().await;
+        let ended = Some("2026-11-02T02:00:00Z");
+        // 50 与 10 的算术平均是 30，而非合并 token/耗时后的 16.7。
+        insert(
+            &pool,
+            "1",
+            Some(100),
+            Some(4000),
+            Some(2000),
+            true,
+            true,
+            ended,
+        )
+        .await;
+        insert(
+            &pool,
+            "2",
+            Some(100),
+            Some(11000),
+            Some(1000),
+            true,
+            true,
+            ended,
+        )
+        .await;
+        let ids = vec!["a".into(), "b".into()];
+        let rows = recent_average_throughputs(&pool, &ids, 20).await.unwrap();
+        assert_eq!(rows.iter().find(|r| r.0 == "a").unwrap().1, Some(30.0));
+        assert_eq!(rows.iter().find(|r| r.0 == "b").unwrap().1, None);
+        // 非流式、缺首字、净耗时为零时均按使用记录的总耗时回退规则。
+        insert(
+            &pool,
+            "3",
+            Some(200),
+            Some(4000),
+            Some(2000),
+            false,
+            true,
+            ended,
+        )
+        .await;
+        insert(&pool, "4", Some(100), Some(2000), None, true, true, ended).await;
+        insert(
+            &pool,
+            "5",
+            Some(100),
+            Some(2000),
+            Some(2000),
+            true,
+            true,
+            ended,
+        )
+        .await;
+        let rows = recent_average_throughputs(&pool, &ids, 20).await.unwrap();
+        assert_eq!(rows.iter().find(|r| r.0 == "a").unwrap().1, Some(42.0));
+        assert!(recent_average_throughputs(&pool, &[], 20)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn takes_twenty_valid_samples_with_stable_order_and_excludes_invalid_rows() {
+        let pool = pool().await;
+        let ended = Some("2026-11-02T02:00:00Z");
+        for n in 1..=21 {
+            insert(
+                &pool,
+                &format!("{n:03}"),
+                Some(if n == 1 { 1000 } else { 100 }),
+                Some(3000),
+                Some(1000),
+                true,
+                true,
+                ended,
+            )
+            .await;
+        }
+        insert(
+            &pool,
+            "z-failed",
+            Some(999),
+            Some(3000),
+            Some(1000),
+            true,
+            false,
+            ended,
+        )
+        .await;
+        insert(
+            &pool,
+            "z-pending",
+            Some(999),
+            Some(3000),
+            Some(1000),
+            true,
+            true,
+            None,
+        )
+        .await;
+        insert(
+            &pool,
+            "z-empty",
+            Some(999),
+            Some(3000),
+            Some(1000),
+            true,
+            true,
+            Some(""),
+        )
+        .await;
+        insert(
+            &pool,
+            "z-zero-output",
+            Some(0),
+            Some(3000),
+            Some(1000),
+            true,
+            true,
+            ended,
+        )
+        .await;
+        insert(
+            &pool,
+            "z-no-usage",
+            None,
+            Some(3000),
+            Some(1000),
+            true,
+            true,
+            ended,
+        )
+        .await;
+        insert(
+            &pool,
+            "z-zero-duration",
+            Some(999),
+            Some(0),
+            None,
+            true,
+            true,
+            ended,
+        )
+        .await;
+        insert(
+            &pool,
+            "z-no-duration",
+            Some(999),
+            None,
+            None,
+            true,
+            true,
+            ended,
+        )
+        .await;
+        let rows = recent_average_throughputs(&pool, &["a".into()], 20)
+            .await
+            .unwrap();
+        assert_eq!(rows, vec![("a".into(), Some(50.0))]);
+    }
 }
