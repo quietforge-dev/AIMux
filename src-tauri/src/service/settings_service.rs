@@ -38,6 +38,7 @@ pub fn validate(settings: &Settings) -> Result<(), String> {
         settings.monitoring_start_time.as_deref(),
         settings.monitoring_end_time.as_deref(),
     )
+    .and_then(|_| validate_monitoring_weekdays(&settings.monitoring_weekdays))
 }
 
 pub fn validate_monitoring_window(start: Option<&str>, end: Option<&str>) -> Result<(), String> {
@@ -60,6 +61,7 @@ pub async fn update(settings: &RwLock<Settings>, mut next: Settings) -> Result<S
     next.monitoring_enabled = current.monitoring_enabled;
     next.monitoring_start_time = current.monitoring_start_time.clone();
     next.monitoring_end_time = current.monitoring_end_time.clone();
+    next.monitoring_weekdays = current.monitoring_weekdays.clone();
     next.monitoring_interval_minutes = current.monitoring_interval_minutes;
     next.monitoring_recent_count = current.monitoring_recent_count;
     validate(&next).map_err(AppError::BadRequest)?;
@@ -74,6 +76,7 @@ pub async fn update_monitoring(
     monitoring_enabled: bool,
     monitoring_start_time: Option<String>,
     monitoring_end_time: Option<String>,
+    monitoring_weekdays: Vec<u8>,
     monitoring_interval_minutes: Option<u64>,
     monitoring_recent_count: Option<i64>,
 ) -> Result<Settings, AppError> {
@@ -81,12 +84,14 @@ pub async fn update_monitoring(
         monitoring_start_time.as_deref(),
         monitoring_end_time.as_deref(),
     )
+    .and_then(|_| validate_monitoring_weekdays(&monitoring_weekdays))
     .map_err(AppError::BadRequest)?;
     let mut current = settings.write().await;
     let mut next = current.clone();
     next.monitoring_enabled = monitoring_enabled;
     next.monitoring_start_time = monitoring_start_time;
     next.monitoring_end_time = monitoring_end_time;
+    next.monitoring_weekdays = monitoring_weekdays;
     if let Some(value) = monitoring_interval_minutes {
         next.monitoring_interval_minutes = value;
     }
@@ -100,9 +105,28 @@ pub async fn update_monitoring(
     Ok(next)
 }
 
+pub fn validate_monitoring_weekdays(weekdays: &[u8]) -> Result<(), String> {
+    if weekdays.is_empty() {
+        return Err("至少选择一个监控日期".into());
+    }
+    if weekdays.iter().any(|day| !(1..=7).contains(day)) {
+        return Err("监控日期必须是 1 到 7".into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn monitoring_weekdays_must_be_nonempty_and_in_range() {
+        assert!(validate_monitoring_weekdays(&[1, 2, 3, 4, 5]).is_ok());
+        assert!(validate_monitoring_weekdays(&[1, 7]).is_ok());
+        assert!(validate_monitoring_weekdays(&[]).is_err());
+        assert!(validate_monitoring_weekdays(&[0]).is_err());
+        assert!(validate_monitoring_weekdays(&[8]).is_err());
+    }
 
     #[test]
     fn priority_penalties_accept_only_one_to_three() {

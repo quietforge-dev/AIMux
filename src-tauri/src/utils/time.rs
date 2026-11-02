@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Local, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Duration, Local, NaiveTime, TimeZone, Utc, Weekday};
 use std::time::Instant;
 
 const DATABASE_TIMESTAMP_FORMAT: &str = "%Y-%m-%dT%H:%M:%SZ";
@@ -67,10 +67,38 @@ pub fn in_monitoring_window(start: Option<&str>, end: Option<&str>, now: NaiveTi
     }
 }
 
+pub fn in_monitoring_schedule(
+    weekdays: &[u8],
+    start: Option<&str>,
+    end: Option<&str>,
+    weekday: Weekday,
+    now: NaiveTime,
+) -> bool {
+    let day = weekday.number_from_monday() as u8;
+    let (Some(start), Some(end)) = (start.and_then(parse_hhmm), end.and_then(parse_hhmm)) else {
+        return weekdays.contains(&day);
+    };
+    if start == end {
+        return weekdays.contains(&day);
+    }
+    if start < end {
+        weekdays.contains(&day) && now >= start && now <= end
+    } else if now >= start {
+        weekdays.contains(&day)
+    } else if now <= end {
+        weekdays.contains(&match weekday {
+            Weekday::Mon => 7,
+            _ => day - 1,
+        })
+    } else {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::in_monitoring_window;
-    use chrono::NaiveTime;
+    use super::{in_monitoring_schedule, in_monitoring_window};
+    use chrono::{NaiveTime, Weekday};
 
     fn time(value: &str) -> NaiveTime {
         NaiveTime::parse_from_str(value, "%H:%M:%S").unwrap()
@@ -137,5 +165,63 @@ mod tests {
         let now = time("12:00:00");
         assert!(in_monitoring_window(Some("bad"), Some("18:00"), now));
         assert!(in_monitoring_window(Some("08:00"), Some("08:00"), now));
+    }
+
+    #[test]
+    fn schedule_respects_selected_weekdays() {
+        let weekdays = [1, 2, 3, 4, 5];
+        assert!(in_monitoring_schedule(
+            &weekdays,
+            Some("09:20"),
+            Some("18:30"),
+            Weekday::Mon,
+            time("12:00:00")
+        ));
+        assert!(!in_monitoring_schedule(
+            &weekdays,
+            Some("09:20"),
+            Some("18:30"),
+            Weekday::Sat,
+            time("12:00:00")
+        ));
+        assert!(in_monitoring_schedule(
+            &weekdays,
+            None,
+            None,
+            Weekday::Fri,
+            time("23:59:00")
+        ));
+        assert!(!in_monitoring_schedule(
+            &weekdays,
+            None,
+            None,
+            Weekday::Sun,
+            time("23:59:00")
+        ));
+    }
+
+    #[test]
+    fn overnight_schedule_uses_start_day_after_midnight() {
+        assert!(in_monitoring_schedule(
+            &[5],
+            Some("22:00"),
+            Some("02:00"),
+            Weekday::Sat,
+            time("01:00:00")
+        ));
+        assert!(!in_monitoring_schedule(
+            &[5],
+            Some("22:00"),
+            Some("02:00"),
+            Weekday::Sun,
+            time("01:00:00")
+        ));
+        assert!(in_monitoring_schedule(
+            &[7],
+            Some("22:00"),
+            Some("02:00"),
+            Weekday::Mon,
+            time("01:00:00")
+        ));
     }
 }

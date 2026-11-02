@@ -25,6 +25,7 @@ export const monitorApi = {
       monitoring_enabled: boolean;
       monitoring_start_time: string | null;
       monitoring_end_time: string | null;
+      monitoring_weekdays: number[];
       monitoring_interval_minutes: number;
       monitoring_recent_count: number;
     }>('/api/monitor/records'),

@@ -44,6 +44,8 @@ pub struct Settings {
     pub monitoring_start_time: Option<String>,
     #[serde(default)]
     pub monitoring_end_time: Option<String>,
+    #[serde(default = "default_monitoring_weekdays")]
+    pub monitoring_weekdays: Vec<u8>,
     pub local_token: String,
     pub launch_at_login: bool,
 }
@@ -74,6 +76,7 @@ impl Default for Settings {
             monitoring_recent_count: default_monitoring_recent_count(),
             monitoring_start_time: None,
             monitoring_end_time: None,
+            monitoring_weekdays: default_monitoring_weekdays(),
             local_token: String::new(),
             launch_at_login: false,
         }
@@ -103,6 +106,9 @@ fn default_request_failure_priority_penalty() -> u8 {
 }
 fn default_monitoring_recent_count() -> i64 {
     30
+}
+fn default_monitoring_weekdays() -> Vec<u8> {
+    (1..=7).collect()
 }
 
 impl Settings {
@@ -182,6 +188,7 @@ mod tests {
         object.remove("slow_first_token_consecutive");
         object.remove("slow_first_token_threshold_seconds");
         object.remove("slow_first_token_priority_penalty");
+        object.remove("monitoring_weekdays");
         let loaded: Settings = serde_json::from_value(value).unwrap();
         assert_eq!(loaded.port, 7790);
         assert_eq!(loaded.request_retry_attempts, 7);
@@ -196,5 +203,6 @@ mod tests {
         assert_eq!(loaded.slow_first_token_consecutive, 5);
         assert_eq!(loaded.slow_first_token_threshold_seconds, 10);
         assert_eq!(loaded.slow_first_token_priority_penalty, 2);
+        assert_eq!(loaded.monitoring_weekdays, (1..=7).collect::<Vec<_>>());
     }
 }

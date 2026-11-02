@@ -11,8 +11,27 @@
           :before-change="changeEnabled"
         />
         <span class="range-label">监控时段</span>
+        <el-select
+          v-model="monitoringWeekdays"
+          class="weekday-select"
+          multiple
+          collapse-tags
+          collapse-tags-tooltip
+          :max-collapse-tags="2"
+          :disabled="savingRange || savingEnabled || savingOptions || loading"
+          placeholder="选择星期"
+          @change="changeRange"
+        >
+          <el-option
+            v-for="day in weekdayOptions"
+            :key="day.value"
+            :label="day.label"
+            :value="day.value"
+          />
+        </el-select>
         <el-time-picker
           v-model="timeRange"
+          class="time-range-picker"
           is-range
           format="HH:mm"
           range-separator="至"
@@ -21,7 +40,7 @@
           :disabled="savingRange || savingEnabled || savingOptions || loading"
           @change="changeRange"
         />
-        <span v-if="enabled && !inWindow" class="window-hint">当前不在监控时段</span>
+        <span v-if="enabled && !inWindow" class="window-hint">当前不在监控计划内</span>
         <span class="range-label">检测间隔</span>
         <el-select
           v-model="intervalMinutes"
@@ -195,6 +214,16 @@ const loading = ref(false);
 const enabled = ref(false);
 const savingEnabled = ref(false);
 const timeRange = ref<[Date, Date] | null>(null);
+const monitoringWeekdays = ref<number[]>([1, 2, 3, 4, 5, 6, 7]);
+const weekdayOptions = [
+  { label: '周一', value: 1 },
+  { label: '周二', value: 2 },
+  { label: '周三', value: 3 },
+  { label: '周四', value: 4 },
+  { label: '周五', value: 5 },
+  { label: '周六', value: 6 },
+  { label: '周日', value: 7 },
+];
 const savingRange = ref(false);
 const modelProviders = computed(
   () =>
@@ -203,6 +232,8 @@ const modelProviders = computed(
     ),
 );
 let timer: number | undefined;
+let clockTimer: number | undefined;
+const nowTick = ref(Date.now());
 
 const load = async () => {
   if (loading.value || savingConfig.value) return;
@@ -212,6 +243,9 @@ const load = async () => {
     items.value = result.items;
     enabled.value = result.monitoring_enabled;
     timeRange.value = toRange(result.monitoring_start_time, result.monitoring_end_time);
+    monitoringWeekdays.value = result.monitoring_weekdays?.length
+      ? [...result.monitoring_weekdays]
+      : [1, 2, 3, 4, 5, 6, 7];
     intervalMinutes.value = result.monitoring_interval_minutes;
     recentCount.value = result.monitoring_recent_count;
     displayCount.value = result.monitoring_recent_count;
@@ -252,14 +286,26 @@ const currentWindow = () => {
   };
 };
 
+const currentMonitoringConfig = () => ({
+  ...currentWindow(),
+  monitoring_weekdays: [...monitoringWeekdays.value].sort((a, b) => a - b),
+});
+
 const inWindow = computed(() => {
-  if (!timeRange.value) return true;
+  void nowTick.value;
   const now = new Date();
+  const weekday = now.getDay() || 7;
   const minutes = now.getHours() * 60 + now.getMinutes();
+  if (!timeRange.value) return monitoringWeekdays.value.includes(weekday);
   const toMinutes = (value: Date) => value.getHours() * 60 + value.getMinutes();
   const start = toMinutes(timeRange.value[0]);
   const end = toMinutes(timeRange.value[1]);
-  return start < end ? minutes >= start && minutes <= end : minutes >= start || minutes <= end;
+  if (start < end) {
+    return monitoringWeekdays.value.includes(weekday) && minutes >= start && minutes <= end;
+  }
+  if (minutes >= start) return monitoringWeekdays.value.includes(weekday);
+  if (minutes <= end) return monitoringWeekdays.value.includes(weekday === 1 ? 7 : weekday - 1);
+  return false;
 });
 
 const changeEnabled = async () => {
@@ -268,7 +314,7 @@ const changeEnabled = async () => {
   try {
     await settingsApi.updateMonitoring({
       monitoring_enabled: next,
-      ...currentWindow(),
+      ...currentMonitoringConfig(),
       monitoring_interval_minutes: intervalMinutes.value,
       monitoring_recent_count: displayCount.value,
     });
@@ -287,7 +333,7 @@ const changeRange = async () => {
   try {
     await settingsApi.updateMonitoring({
       monitoring_enabled: enabled.value,
-      ...currentWindow(),
+      ...currentMonitoringConfig(),
       monitoring_interval_minutes: intervalMinutes.value,
       monitoring_recent_count: displayCount.value,
     });
@@ -316,7 +362,7 @@ const changeOptions = async () => {
   try {
     await settingsApi.updateMonitoring({
       monitoring_enabled: enabled.value,
-      ...currentWindow(),
+      ...currentMonitoringConfig(),
       monitoring_interval_minutes: intervalMinutes.value,
       monitoring_recent_count: recentCount.value,
     });
@@ -381,9 +427,13 @@ onMounted(() => {
   showCheckDuration.value = window.localStorage.getItem(CHECK_DURATION_DISPLAY_KEY) === 'true';
   load();
   timer = window.setInterval(load, 30_000);
+  clockTimer = window.setInterval(() => {
+    nowTick.value = Date.now();
+  }, 30_000);
 });
 onUnmounted(() => {
   if (timer !== undefined) window.clearInterval(timer);
+  if (clockTimer !== undefined) window.clearInterval(clockTimer);
 });
 </script>
 
@@ -394,6 +444,13 @@ onUnmounted(() => {
   gap: 12px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+.weekday-select {
+  width: 170px;
+}
+
+.time-range-picker {
+  width: 240px;
 }
 
 .interval-select {

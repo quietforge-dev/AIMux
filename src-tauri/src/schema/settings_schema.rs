@@ -21,6 +21,12 @@ pub struct MonitoringSettingsUpdate {
     pub monitoring_start_time: Option<String>,
     #[serde(default)]
     pub monitoring_end_time: Option<String>,
+    #[serde(default = "default_monitoring_weekdays")]
+    pub monitoring_weekdays: Vec<u8>,
     pub monitoring_interval_minutes: Option<u64>,
     pub monitoring_recent_count: Option<i64>,
+}
+
+fn default_monitoring_weekdays() -> Vec<u8> {
+    (1..=7).collect()
 }

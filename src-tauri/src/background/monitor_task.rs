@@ -1,3 +1,4 @@
+use chrono::Datelike;
 use std::time::Duration;
 use std::{
     cmp::Ordering,
@@ -26,11 +27,14 @@ pub async fn run(state: Arc<AppState>) {
     loop {
         ticker.tick().await;
         let settings = state.settings.read().await.clone();
+        let local_now = chrono::Local::now();
         if !settings.monitoring_enabled
-            || !crate::utils::time::in_monitoring_window(
+            || !crate::utils::time::in_monitoring_schedule(
+                &settings.monitoring_weekdays,
                 settings.monitoring_start_time.as_deref(),
                 settings.monitoring_end_time.as_deref(),
-                chrono::Local::now().time(),
+                local_now.weekday(),
+                local_now.time(),
             )
         {
             continue;

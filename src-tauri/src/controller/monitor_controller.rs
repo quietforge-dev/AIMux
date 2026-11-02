@@ -42,6 +42,7 @@ async fn records(
         "monitoring_enabled":settings.monitoring_enabled,
         "monitoring_start_time":settings.monitoring_start_time,
         "monitoring_end_time":settings.monitoring_end_time,
+        "monitoring_weekdays":settings.monitoring_weekdays,
         "monitoring_interval_minutes":settings.monitoring_interval_minutes,
         "monitoring_recent_count":settings.monitoring_recent_count
     })))

@@ -235,6 +235,7 @@ const form = reactive<Settings>({
   monitoring_recent_count: 30,
   monitoring_start_time: null,
   monitoring_end_time: null,
+  monitoring_weekdays: [1, 2, 3, 4, 5, 6, 7],
   local_token: '',
   launch_at_login: false,
 });

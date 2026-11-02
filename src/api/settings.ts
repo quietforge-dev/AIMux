@@ -23,6 +23,7 @@ export type Settings = {
   monitoring_recent_count: number;
   monitoring_start_time: string | null;
   monitoring_end_time: string | null;
+  monitoring_weekdays: number[];
   local_token: string;
   launch_at_login: boolean;
 };
@@ -30,6 +31,7 @@ export type MonitoringSettings = {
   monitoring_enabled: boolean;
   monitoring_start_time: string | null;
   monitoring_end_time: string | null;
+  monitoring_weekdays: number[];
   monitoring_interval_minutes: number;
   monitoring_recent_count: number;
 };
