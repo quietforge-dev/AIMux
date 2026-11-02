@@ -12,9 +12,14 @@
         <el-button :disabled="!hasCustomWidths" @click="resetColumnWidths">恢复默认列宽</el-button>
       </div>
     </div>
+    <el-tabs v-model="statusFilter" class="account-status-tabs">
+      <el-tab-pane label="全部" name="all" />
+      <el-tab-pane label="启用" name="active" />
+      <el-tab-pane label="禁用" name="disabled" />
+    </el-tabs>
     <el-table
       :key="tableKey"
-      :data="items"
+      :data="filteredItems"
       v-loading="loading"
       border
       class="compact-table"
@@ -171,7 +176,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
   multiplierMonitorApi,
@@ -184,6 +189,12 @@ import { useTableColumnWidths } from '../../composables/useTableColumnWidths';
 const { tableKey, hasCustomWidths, columnWidth, handleColumnResize, resetColumnWidths } =
   useTableColumnWidths('multiplier-monitor');
 const items = ref<MultiplierMonitorConfig[]>([]);
+const statusFilter = ref<'all' | 'active' | 'disabled'>('active');
+const filteredItems = computed(() =>
+  statusFilter.value === 'all'
+    ? items.value
+    : items.value.filter((item) => item.account_status === statusFilter.value),
+);
 const loading = ref(false);
 const saving = ref(false);
 const formVisible = ref(false);
@@ -317,6 +328,9 @@ onMounted(load);
   display: flex;
   align-items: center;
   gap: 10px;
+}
+.account-status-tabs {
+  margin-bottom: 10px;
 }
 .hint {
   color: #7b8494;
