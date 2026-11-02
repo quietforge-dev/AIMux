@@ -13,42 +13,35 @@ export type MultiplierMonitorRunSummary = {
 
 export type MultiplierMonitorConfig = {
   id: string;
-  name: string;
-  url: string;
-  account_ids: string[];
+  account_id: string;
+  account_name: string;
+  account_type: 'openai' | 'anthropic';
+  account_status: 'active' | 'disabled';
+  account_multiplier: number;
+  configured: boolean;
+  platform_type: 'sub2api' | 'newapi';
+  new_api_group?: string | null;
+  sync_upstream_multiplier: boolean;
   multiplier_divisor: number;
   enabled: boolean;
-  has_token: boolean;
-  has_refresh_token: boolean;
   last_started_at?: string | null;
   last_finished_at?: string | null;
+  last_success_at?: string | null;
+  last_error?: string | null;
+  last_remote_multiplier?: number | null;
+  last_result?: string | null;
   running: boolean;
   last_run?: MultiplierMonitorRunSummary | null;
   created_at: string;
   updated_at: string;
 };
 
-export type MultiplierMonitorAccountOption = {
-  id: string;
-  name: string;
-  type: 'openai' | 'anthropic';
-  status: 'active' | 'disabled';
-  multiplier: number;
-};
-
-export type MultiplierMonitorCreate = {
-  name: string;
-  url: string;
-  token: string;
-  refresh_token: string;
-  account_ids: string[];
+export type MultiplierMonitorUpdate = {
+  platform_type: 'sub2api' | 'newapi';
+  new_api_group?: string | null;
+  sync_upstream_multiplier: boolean;
   multiplier_divisor: number;
   enabled: boolean;
-};
-
-export type MultiplierMonitorUpdate = Omit<MultiplierMonitorCreate, 'token' | 'refresh_token'> & {
-  token?: string;
-  refresh_token?: string;
 };
 
 export type MultiplierMonitorCheckResult = {
@@ -78,21 +71,23 @@ export type MultiplierMonitorLog = {
   http_status?: number | null;
 };
 
+export type NewApiGroup = { name: string; rate: string };
+
 export const multiplierMonitorApi = {
   list: () => get<{ items: MultiplierMonitorConfig[] }>('/api/multiplier-monitors'),
-  accountOptions: () =>
-    get<{ items: MultiplierMonitorAccountOption[] }>('/api/multiplier-monitors/account-options'),
-  create: (payload: MultiplierMonitorCreate) =>
-    post<MultiplierMonitorConfig>('/api/multiplier-monitors', payload),
-  update: (id: string, payload: MultiplierMonitorUpdate) =>
-    put<MultiplierMonitorConfig>(`/api/multiplier-monitors/${id}`, payload),
-  toggle: (id: string) => post<MultiplierMonitorConfig>(`/api/multiplier-monitors/${id}/toggle`),
-  check: (id: string) => post<MultiplierMonitorCheckResult>(`/api/multiplier-monitors/${id}/check`),
-  logs: (id: string, offset: number, limit: number, result?: string) => {
+  update: (accountId: string, payload: MultiplierMonitorUpdate) =>
+    put<MultiplierMonitorConfig>(`/api/multiplier-monitors/${accountId}`, payload),
+  toggle: (accountId: string) =>
+    post<MultiplierMonitorConfig>(`/api/multiplier-monitors/${accountId}/toggle`),
+  check: (accountId: string) =>
+    post<MultiplierMonitorCheckResult>(`/api/multiplier-monitors/${accountId}/check`),
+  newApiGroups: (accountId: string) =>
+    get<{ items: NewApiGroup[] }>(`/api/multiplier-monitors/${accountId}/newapi-groups`),
+  logs: (accountId: string, offset: number, limit: number, result?: string) => {
     const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
     if (result) params.set('result', result);
     return get<{ items: MultiplierMonitorLog[]; total: number }>(
-      `/api/multiplier-monitors/${id}/logs?${params}`,
+      `/api/multiplier-monitors/${accountId}/logs?${params}`,
     );
   },
 };

@@ -37,6 +37,97 @@ pub struct RefreshedTokens {
     pub refresh_token: String,
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct NewApiGroup {
+    pub name: String,
+    pub rate: String,
+}
+
+pub async fn fetch_newapi_groups(
+    raw_url: &str,
+    settings: &Settings,
+) -> Result<Vec<NewApiGroup>, MultiplierQueryError> {
+    let mut base = validated_url(raw_url)?;
+    base.set_path("");
+    base.set_query(None);
+    let endpoint = endpoint_url(&base, "/api/pricing", true);
+    let response = build_client(settings)?
+        .get(endpoint)
+        .header(ACCEPT, "application/json")
+        .send()
+        .await
+        .map_err(|e| {
+            MultiplierQueryError::new("request_failed", format!("读取 New API 倍率失败: {e}"))
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(MultiplierQueryError::with_status(
+            "http_error",
+            format!("New API 定价接口返回 HTTP {}", status.as_u16()),
+            status.as_u16(),
+        ));
+    }
+    let bytes = read_limited(response, MAX_PAGE_RESPONSE_BYTES).await?;
+    let root: Value = serde_json::from_slice(&bytes).map_err(|_| {
+        MultiplierQueryError::new("invalid_json", "New API 定价接口返回的不是有效 JSON")
+    })?;
+    if root.get("success").and_then(Value::as_bool) == Some(false) {
+        return Err(MultiplierQueryError::new(
+            "business_error",
+            "New API 定价接口返回失败",
+        ));
+    }
+    let ratios = root
+        .pointer("/group_ratio")
+        .or_else(|| root.pointer("/data/group_ratio"))
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            MultiplierQueryError::new("invalid_response", "New API 响应缺少 group_ratio")
+        })?;
+    let usable = root
+        .pointer("/usable_group")
+        .or_else(|| root.pointer("/data/usable_group"))
+        .and_then(Value::as_object);
+    let mut groups = ratios
+        .iter()
+        .filter_map(|(name, value)| {
+            if usable.is_some_and(|map| !map.contains_key(name)) {
+                return None;
+            }
+            let rate = match value {
+                Value::Number(n) => n.to_string(),
+                Value::String(s) => s.clone(),
+                _ => return None,
+            };
+            Some(NewApiGroup {
+                name: name.clone(),
+                rate,
+            })
+        })
+        .collect::<Vec<_>>();
+    groups.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    if groups.is_empty() {
+        return Err(MultiplierQueryError::new(
+            "empty_groups",
+            "New API 没有返回可用分组倍率",
+        ));
+    }
+    Ok(groups)
+}
+
+pub async fn fetch_newapi_rate(
+    raw_url: &str,
+    group: &str,
+    settings: &Settings,
+) -> Result<String, MultiplierQueryError> {
+    fetch_newapi_groups(raw_url, settings)
+        .await?
+        .into_iter()
+        .find(|item| item.name == group)
+        .map(|item| item.rate)
+        .ok_or_else(|| MultiplierQueryError::new("group_not_found", "New API 未返回所选组的倍率"))
+}
+
 impl MultiplierQueryError {
     fn new(code: &str, message: impl Into<String>) -> Self {
         Self {
@@ -201,6 +292,68 @@ pub async fn fetch_all(
         page += 1;
     }
     Ok(result)
+}
+
+pub async fn fetch_sub2api_billing(
+    raw_url: &str,
+    raw_token: &str,
+    settings: &Settings,
+) -> Result<RemoteMultiplier, MultiplierQueryError> {
+    let mut base = validated_url(raw_url)?;
+    base.set_path("");
+    base.set_query(None);
+    let mut endpoint = base;
+    endpoint.set_path("/v1/sub2api/billing");
+    endpoint.set_query(None);
+    let http = build_client(settings)?;
+    let response = http
+        .get(endpoint)
+        .header(AUTHORIZATION, authorization_value(raw_token)?)
+        .header(ACCEPT, "application/json")
+        .send()
+        .await
+        .map_err(|e| {
+            MultiplierQueryError::new("request_failed", format!("倍率查询请求失败: {e}"))
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(MultiplierQueryError::with_status(
+            "http_error",
+            format!("倍率查询接口返回 HTTP {}", status.as_u16()),
+            status.as_u16(),
+        ));
+    }
+    let bytes = read_limited(response, MAX_PAGE_RESPONSE_BYTES).await?;
+    let value: Value = serde_json::from_slice(&bytes).map_err(|_| {
+        MultiplierQueryError::new("invalid_json", "倍率查询接口返回的不是有效 JSON")
+    })?;
+    let rate = value
+        .pointer("/effective_rate_multiplier")
+        .or_else(|| value.pointer("/data/effective_rate_multiplier"))
+        .or_else(|| value.pointer("/resolved_rate_multiplier"))
+        .or_else(|| value.pointer("/data/rate_multiplier"))
+        .or_else(|| value.pointer("/rate_multiplier"));
+    let Some(rate) = rate else {
+        return Err(MultiplierQueryError::new(
+            "invalid_response",
+            "Sub2API billing 响应缺少倍率",
+        ));
+    };
+    let rate = match rate {
+        Value::Number(v) => v.to_string(),
+        Value::String(v) => v.clone(),
+        _ => {
+            return Err(MultiplierQueryError::new(
+                "invalid_rate",
+                "Sub2API 返回的倍率不是数字",
+            ))
+        }
+    };
+    Ok(RemoteMultiplier {
+        key: raw_token.trim().trim_start_matches("Bearer ").to_owned(),
+        rate_multiplier: Some(rate),
+        rate_error: None,
+    })
 }
 
 pub async fn refresh_tokens(

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, str::FromStr, time::Duration};
+use std::{str::FromStr, time::Duration};
 
 use chrono::{Duration as ChronoDuration, Utc};
 use futures_util::{stream, StreamExt};
@@ -12,75 +12,34 @@ use crate::{
     error::AppError,
     model::multiplier_monitor::{MultiplierMonitorConfig, MultiplierMonitorLog},
     schema::multiplier_monitor_schema::{
-        MultiplierMonitorCheckResult, MultiplierMonitorConfigView, MultiplierMonitorCreate,
-        MultiplierMonitorRunSummary, MultiplierMonitorUpdate,
+        MultiplierMonitorCheckResult, MultiplierMonitorConfigView, MultiplierMonitorUpdate,
     },
     service::multiplier_query::{self, MultiplierQueryError, RemoteMultiplier},
     utils::time::{elapsed_millis, utc_datetime_string, utc_now_string},
 };
 
-const MAX_ACCOUNT_COUNT: usize = 10_000;
-const QUERY_TOTAL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-const LEASE_DURATION_MINUTES: i64 = 10;
-const SCHEDULE_INTERVAL_HOURS: i64 = 1;
-const MAX_ERROR_LENGTH: usize = 500;
-const CONFIG_CONCURRENCY: usize = 2;
 const MAX_MULTIPLIER_DIVISOR: i64 = 10_000;
-
-#[derive(Clone)]
-struct ParsedRemoteRate {
-    decimal: Option<Decimal>,
-    value: Option<f64>,
-    error: Option<String>,
-}
+const LEASE_MINUTES: i64 = 10;
+const SCHEDULE_INTERVAL_HOURS: i64 = 1;
+const QUERY_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<MultiplierMonitorConfigView>, AppError> {
-    let configs = multiplier_monitor_dao::list_configs(pool).await?;
     let now = utc_now_string();
-    let mut views = Vec::with_capacity(configs.len());
-    for config in configs {
-        views.push(to_view(pool, config, &now).await?);
-    }
-    Ok(views)
+    multiplier_monitor_dao::list_entries(pool)
+        .await?
+        .iter()
+        .map(|entry| view(entry, &now))
+        .collect()
 }
 
 pub async fn get_view(
     pool: &SqlitePool,
     id: &str,
 ) -> Result<MultiplierMonitorConfigView, AppError> {
-    let config = multiplier_monitor_dao::get_config(pool, id)
+    let entry = multiplier_monitor_dao::get_entry(pool, id)
         .await?
-        .ok_or_else(|| AppError::NotFound("倍率监控配置不存在".into()))?;
-    to_view(pool, config, &utc_now_string()).await
-}
-
-pub async fn create(
-    pool: &SqlitePool,
-    payload: MultiplierMonitorCreate,
-) -> Result<MultiplierMonitorConfigView, AppError> {
-    let name = validate_name(&payload.name)?;
-    let url = validate_url(&payload.url)?;
-    let token = normalize_token(&payload.token)?;
-    let refresh_token = normalize_refresh_token(&payload.refresh_token)?;
-    let multiplier_divisor = validate_multiplier_divisor(payload.multiplier_divisor)?;
-    let account_ids = normalize_account_ids(payload.account_ids)?;
-    validate_accounts(pool, &account_ids).await?;
-    validate_enabled_conflicts(pool, None, payload.enabled, &account_ids).await?;
-    let account_ids_json = serde_json::to_string(&account_ids)
-        .map_err(|error| AppError::Internal(error.to_string()))?;
-    let config = multiplier_monitor_dao::create_config(
-        pool,
-        &name,
-        &url,
-        &token,
-        &refresh_token,
-        &account_ids_json,
-        multiplier_divisor,
-        payload.enabled,
-        &utc_now_string(),
-    )
-    .await?;
-    to_view(pool, config, &utc_now_string()).await
+        .ok_or_else(|| AppError::NotFound("账号不存在".into()))?;
+    view(&entry, &utc_now_string())
 }
 
 pub async fn update(
@@ -88,65 +47,73 @@ pub async fn update(
     id: &str,
     payload: MultiplierMonitorUpdate,
 ) -> Result<MultiplierMonitorConfigView, AppError> {
-    let current = multiplier_monitor_dao::get_config(pool, id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("倍率监控配置不存在".into()))?;
-    let name = validate_name(&payload.name)?;
-    let url = validate_url(&payload.url)?;
-    let token = match payload.token.as_deref().map(str::trim) {
-        None | Some("") => current.token.clone(),
-        Some(value) => normalize_token(value)?,
-    };
-    let refresh_token = match payload.refresh_token.as_deref().map(str::trim) {
-        None | Some("") => current.refresh_token.clone(),
-        Some(value) => normalize_refresh_token(value)?,
-    };
-    let multiplier_divisor = validate_multiplier_divisor(
+    let current = multiplier_monitor_dao::get_config(pool, id).await?;
+    let platform = payload
+        .platform_type
+        .as_deref()
+        .or(current.as_ref().map(|c| c.platform_type.as_str()))
+        .unwrap_or("sub2api");
+    let group = if platform == "newapi" {
         payload
-            .multiplier_divisor
-            .unwrap_or(current.multiplier_divisor),
-    )?;
-    let account_ids = normalize_account_ids(payload.account_ids)?;
-    validate_accounts(pool, &account_ids).await?;
-    validate_enabled_conflicts(pool, Some(id), payload.enabled, &account_ids).await?;
-    let account_ids_json = serde_json::to_string(&account_ids)
-        .map_err(|error| AppError::Internal(error.to_string()))?;
-    let reset_schedule = current.url != url
-        || current.token != token
-        || current.refresh_token != refresh_token
-        || current.account_ids != account_ids_json
-        || current.multiplier_divisor != multiplier_divisor;
-    let config = multiplier_monitor_dao::update_config(
+            .new_api_group
+            .as_deref()
+            .or(current.as_ref().and_then(|c| c.new_api_group.as_deref()))
+    } else {
+        None
+    };
+    let divisor = payload
+        .multiplier_divisor
+        .or(current.as_ref().map(|c| c.multiplier_divisor))
+        .unwrap_or(1);
+    let sync = payload
+        .sync_upstream_multiplier
+        .or(current.as_ref().map(|c| c.sync_upstream_multiplier))
+        .unwrap_or(false);
+    let enabled = payload
+        .enabled
+        .or(current.as_ref().map(|c| c.enabled))
+        .unwrap_or(false);
+    save(pool, id, platform, group, sync, divisor, enabled).await
+}
+
+async fn save(
+    pool: &SqlitePool,
+    account_id: &str,
+    platform: &str,
+    group: Option<&str>,
+    sync: bool,
+    divisor: i64,
+    enabled: bool,
+) -> Result<MultiplierMonitorConfigView, AppError> {
+    validate(account_id, platform, group, divisor)?;
+    multiplier_monitor_dao::get_entry(pool, account_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("账号不存在".into()))?;
+    multiplier_monitor_dao::upsert_config(
         pool,
-        id,
-        &name,
-        &url,
-        &token,
-        &refresh_token,
-        &account_ids_json,
-        multiplier_divisor,
-        payload.enabled,
-        reset_schedule,
+        account_id,
+        platform,
+        group,
+        sync,
+        divisor,
+        enabled,
         &utc_now_string(),
     )
-    .await?
-    .ok_or_else(|| AppError::NotFound("倍率监控配置不存在".into()))?;
-    to_view(pool, config, &utc_now_string()).await
+    .await?;
+    get_view(pool, account_id).await
 }
 
 pub async fn toggle(pool: &SqlitePool, id: &str) -> Result<MultiplierMonitorConfigView, AppError> {
-    let current = multiplier_monitor_dao::get_config(pool, id)
+    let now = utc_now_string();
+    if multiplier_monitor_dao::get_config(pool, id)
         .await?
-        .ok_or_else(|| AppError::NotFound("倍率监控配置不存在".into()))?;
-    if !current.enabled {
-        let account_ids = parse_account_ids(&current.account_ids)?;
-        validate_accounts(pool, &account_ids).await?;
-        validate_enabled_conflicts(pool, Some(id), true, &account_ids).await?;
+        .is_some()
+    {
+        multiplier_monitor_dao::toggle_config(pool, id, &now).await?;
+    } else {
+        return Err(AppError::BadRequest("请先配置上游平台后再开启监控".into()));
     }
-    let config = multiplier_monitor_dao::toggle_config(pool, id, &utc_now_string())
-        .await?
-        .ok_or_else(|| AppError::NotFound("倍率监控配置不存在".into()))?;
-    to_view(pool, config, &utc_now_string()).await
+    get_view(pool, id).await
 }
 
 pub async fn check_now(
@@ -155,39 +122,46 @@ pub async fn check_now(
     id: &str,
 ) -> Result<MultiplierMonitorCheckResult, AppError> {
     let owner = format!("manual-{}", Uuid::new_v4());
-    let config = claim(pool, id, &owner, true)
+    let cfg = claim(pool, id, &owner, true)
         .await?
-        .ok_or_else(|| AppError::BadRequest("配置已停用或正在检查中".into()))?;
-    run_claimed(pool, settings, config, &owner).await
+        .ok_or_else(|| AppError::BadRequest("监控已关闭或正在检查中".into()))?;
+    run_claimed(pool, settings, cfg, &owner).await
 }
 
-pub async fn run_due(
-    pool: &SqlitePool,
-    settings: &Settings,
-    worker_id: &str,
-) -> Result<(), AppError> {
+pub async fn run_due(pool: &SqlitePool, settings: &Settings, worker: &str) -> Result<(), AppError> {
     let now = Utc::now();
-    let due_before = utc_datetime_string(now - ChronoDuration::hours(SCHEDULE_INTERVAL_HOURS));
-    let now_text = utc_datetime_string(now);
-    let ids = multiplier_monitor_dao::list_due_ids(pool, &due_before, &now_text).await?;
+    let ids = multiplier_monitor_dao::list_due_ids(pool, &due_time(now), &utc_datetime_string(now))
+        .await?;
     let mut pending = stream::iter(ids)
         .map(|id| async move {
-            let owner = format!("{worker_id}-{}", Uuid::new_v4());
-            let Some(config) = claim(pool, &id, &owner, false).await? else {
-                return Ok::<_, AppError>(());
-            };
-            if let Err(error) = run_claimed(pool, settings, config, &owner).await {
-                tracing::error!(config_id = %id, %error, "倍率监控配置执行失败");
+            let owner = format!("{worker}-{}", Uuid::new_v4());
+            if let Some(config) = claim(pool, &id, &owner, false).await? {
+                if let Err(error) = run_claimed(pool, settings, config, &owner).await {
+                    tracing::error!(account_id = %id, %error, "倍率监控执行失败");
+                }
             }
-            Ok(())
+            Ok::<(), AppError>(())
         })
-        .buffer_unordered(CONFIG_CONCURRENCY);
+        .buffer_unordered(2);
     while let Some(result) = pending.next().await {
         if let Err(error) = result {
-            tracing::error!(%error, "倍率监控配置领取失败");
+            tracing::error!(%error, "倍率监控任务领取失败");
         }
     }
     Ok(())
+}
+
+pub async fn newapi_groups(
+    pool: &SqlitePool,
+    settings: &Settings,
+    account_id: &str,
+) -> Result<Vec<multiplier_query::NewApiGroup>, AppError> {
+    let account = multiplier_monitor_dao::get_account(pool, account_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("账号不存在".into()))?;
+    multiplier_query::fetch_newapi_groups(&account.base_url, settings)
+        .await
+        .map_err(|e| AppError::BadRequest(e.message))
 }
 
 async fn claim(
@@ -202,8 +176,8 @@ async fn claim(
         id,
         owner,
         &utc_datetime_string(now),
-        &utc_datetime_string(now + ChronoDuration::minutes(LEASE_DURATION_MINUTES)),
-        &utc_datetime_string(now - ChronoDuration::hours(SCHEDULE_INTERVAL_HOURS)),
+        &utc_datetime_string(now + ChronoDuration::minutes(LEASE_MINUTES)),
+        &due_time(now),
         force,
     )
     .await
@@ -215,631 +189,226 @@ async fn run_claimed(
     config: MultiplierMonitorConfig,
     owner: &str,
 ) -> Result<MultiplierMonitorCheckResult, AppError> {
+    let entry = multiplier_monitor_dao::get_entry(pool, &config.account_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("账号不存在".into()))?;
     let started_at = config
         .last_started_at
         .clone()
         .unwrap_or_else(utc_now_string);
-    let started = std::time::Instant::now();
-    let mut config = config;
-    let query = tokio::time::timeout(
-        QUERY_TOTAL_TIMEOUT,
-        fetch_with_refresh(pool, settings, &mut config, owner),
-    )
-    .await;
-    let remote = match query {
-        Ok(Ok(items)) => items,
-        Ok(Err(FetchRunError::Query(error))) => {
-            return finish_query_failure(pool, &config, owner, &started_at, started, error).await;
-        }
-        Ok(Err(FetchRunError::App(error))) => {
-            let _ =
-                multiplier_monitor_dao::release_config(pool, &config.id, owner, &utc_now_string())
-                    .await;
-            return Err(error);
-        }
-        Err(_) => {
-            return finish_query_failure(
-                pool,
-                &config,
-                owner,
-                &started_at,
-                started,
-                MultiplierQueryError {
-                    code: "query_timeout".into(),
-                    message: "倍率查询超过整体 5 分钟限制".into(),
-                    http_status: None,
-                },
-            )
-            .await;
-        }
-    };
-    let remote_by_key = match remote_map(remote, config.multiplier_divisor) {
-        Ok(map) => map,
-        Err(error) => {
-            return finish_query_failure(pool, &config, owner, &started_at, started, error).await;
-        }
-    };
-    let account_ids = parse_account_ids(&config.account_ids)?;
-    let accounts = multiplier_monitor_dao::get_accounts_by_ids(pool, &account_ids).await?;
-    let accounts = accounts
-        .into_iter()
-        .map(|account| (account.id.clone(), account))
-        .collect::<HashMap<_, _>>();
-    let finished_at = utc_now_string();
-    let duration_ms = elapsed_millis(started);
+    let timer = std::time::Instant::now();
+    let query = tokio::time::timeout(QUERY_TIMEOUT, fetch_rate(settings, &entry, &config)).await;
     let run_id = Uuid::new_v4().to_string();
-    let mut logs = Vec::with_capacity(account_ids.len());
-    let mut changes = Vec::new();
-
-    for account_id in account_ids {
-        let Some(account) = accounts.get(&account_id) else {
-            logs.push(account_log(
-                &run_id,
-                &config,
-                Some(account_id),
-                Some("账号已删除".into()),
-                &started_at,
-                &finished_at,
-                duration_ms,
-                "account_missing",
-                None,
-                None,
-                Some("account_missing"),
-                Some("配置中的账号已不存在"),
-            ));
-            continue;
-        };
-        if account.status != "active" {
-            logs.push(account_log(
-                &run_id,
-                &config,
-                Some(account.id.clone()),
-                Some(account.name.clone()),
-                &started_at,
-                &finished_at,
-                duration_ms,
-                "skipped_disabled",
-                Some(account.multiplier),
-                None,
-                Some("account_disabled"),
-                Some("账号已停用，未更新倍率"),
-            ));
-            continue;
+    let finished_at = utc_now_string();
+    let mut log = MultiplierMonitorLog {
+        id: Uuid::new_v4().to_string(),
+        run_id: run_id.clone(),
+        config_id: config.id.clone(),
+        config_name: entry.account_name.clone(),
+        account_id: Some(entry.account_id.clone()),
+        account_name: Some(entry.account_name.clone()),
+        started_at: started_at.clone(),
+        finished_at: finished_at.clone(),
+        duration_ms: Some(elapsed_millis(timer)),
+        result: "failed".into(),
+        old_multiplier: Some(entry.account_multiplier),
+        remote_multiplier: None,
+        error_code: None,
+        error_message: None,
+        http_status: None,
+    };
+    let mut change = None;
+    match query {
+        Err(_) => {
+            log.error_code = Some("query_timeout".into());
+            log.error_message = Some("倍率查询超过 60 秒限制".into());
         }
-        let account_key = account.api_key_encrypted.trim();
-        let Some(remote_rate) = remote_by_key.get(account_key) else {
-            logs.push(account_log(
-                &run_id,
-                &config,
-                Some(account.id.clone()),
-                Some(account.name.clone()),
-                &started_at,
-                &finished_at,
-                duration_ms,
-                "missing_key",
-                Some(account.multiplier),
-                None,
-                Some("key_not_found"),
-                Some("远端结果中未找到该账号密钥"),
-            ));
-            continue;
-        };
-        if let Some(error) = remote_rate.error.as_deref() {
-            logs.push(account_log(
-                &run_id,
-                &config,
-                Some(account.id.clone()),
-                Some(account.name.clone()),
-                &started_at,
-                &finished_at,
-                duration_ms,
-                "invalid_rate",
-                Some(account.multiplier),
-                remote_rate.value,
-                Some("invalid_rate"),
-                Some(error),
-            ));
-            continue;
+        Ok(Err(error)) => {
+            log.error_code = Some(error.code);
+            log.error_message = Some(error.message);
+            log.http_status = error.http_status;
         }
-        let Some(remote_decimal) = remote_rate.decimal else {
-            continue;
-        };
-        let current_decimal = Decimal::from_str(&format!("{:.2}", account.multiplier))
-            .map_err(|error| AppError::Internal(error.to_string()))?;
-        if current_decimal == remote_decimal {
-            logs.push(account_log(
-                &run_id,
-                &config,
-                Some(account.id.clone()),
-                Some(account.name.clone()),
-                &started_at,
-                &finished_at,
-                duration_ms,
-                "unchanged",
-                Some(account.multiplier),
-                remote_rate.value,
-                None,
-                None,
-            ));
-            continue;
-        }
-        let log_index = logs.len();
-        logs.push(account_log(
-            &run_id,
-            &config,
-            Some(account.id.clone()),
-            Some(account.name.clone()),
-            &started_at,
-            &finished_at,
-            duration_ms,
-            "updated",
-            Some(account.multiplier),
-            remote_rate.value,
-            None,
-            None,
-        ));
-        changes.push(AccountMultiplierChange {
-            log_index,
-            account_id: account.id.clone(),
-            expected_key: account.api_key_encrypted.clone(),
-            expected_multiplier: account.multiplier,
-            next_multiplier: remote_rate.value.unwrap_or(account.multiplier),
-        });
+        Ok(Ok(remote)) => match parse_rate(&remote, config.multiplier_divisor) {
+            Err(message) => {
+                log.error_code = Some("invalid_rate".into());
+                log.error_message = Some(message);
+            }
+            Ok(rate) => {
+                log.remote_multiplier = Some(rate);
+                if (rate - entry.account_multiplier).abs() < 0.000001 {
+                    log.result = "unchanged".into();
+                } else if config.sync_upstream_multiplier {
+                    log.result = "updated".into();
+                    change = Some(AccountMultiplierChange {
+                        log_index: 0,
+                        account_id: entry.account_id.clone(),
+                        expected_key: entry.api_key.clone(),
+                        expected_multiplier: entry.account_multiplier,
+                        next_multiplier: rate,
+                    });
+                } else {
+                    log.result = "observed".into();
+                }
+            }
+        },
     }
-
-    match multiplier_monitor_dao::complete_run(
+    let ok = log.result != "failed";
+    let error = log.error_message.clone();
+    multiplier_monitor_dao::finish_run(
         pool,
         &config,
         owner,
         &finished_at,
-        &mut logs,
-        &changes,
+        &mut log,
+        change.as_ref(),
+        ok,
+        error.as_deref(),
     )
-    .await
-    {
-        Ok(true) => Ok(summarize(&run_id, &logs)),
-        Ok(false) => {
-            let log = account_log(
-                &run_id,
-                &config,
-                None,
-                None,
-                &started_at,
-                &finished_at,
-                duration_ms,
-                "cancelled",
-                None,
-                None,
-                Some("config_changed"),
-                Some("检查期间配置已编辑或停用，本轮未更新"),
-            );
-            multiplier_monitor_dao::insert_log_and_release(
-                pool,
-                &log,
-                &config.id,
-                owner,
-                &finished_at,
-            )
-            .await?;
-            Ok(summarize(&run_id, &[log]))
-        }
-        Err(error) => {
-            let _ =
-                multiplier_monitor_dao::release_config(pool, &config.id, owner, &finished_at).await;
-            Err(error)
-        }
-    }
-}
-
-enum FetchRunError {
-    Query(MultiplierQueryError),
-    App(AppError),
-}
-
-async fn fetch_with_refresh(
-    pool: &SqlitePool,
-    settings: &Settings,
-    config: &mut MultiplierMonitorConfig,
-    owner: &str,
-) -> Result<Vec<RemoteMultiplier>, FetchRunError> {
-    let first = multiplier_query::fetch_all(&config.url, &config.token, settings).await;
-    let error = match first {
-        Ok(items) => return Ok(items),
-        Err(error) => error,
-    };
-    if error.http_status != Some(401) {
-        return Err(FetchRunError::Query(error));
-    }
-    if config.refresh_token.trim().is_empty() {
-        return Err(FetchRunError::Query(MultiplierQueryError {
-            code: "unauthorized_no_refresh_token".into(),
-            message: "倍率查询接口返回 401，但未配置 refresh token".into(),
-            http_status: Some(401),
-        }));
-    }
-    let refreshed = multiplier_query::refresh_tokens(&config.url, &config.refresh_token, settings)
-        .await
-        .map_err(FetchRunError::Query)?;
-    let updated = multiplier_monitor_dao::update_tokens_if_current(
-        pool,
-        &config.id,
-        owner,
-        &config.updated_at,
-        &refreshed.access_token,
-        &refreshed.refresh_token,
-        &utc_now_string(),
-    )
-    .await
-    .map_err(FetchRunError::App)?;
-    let Some(updated) = updated else {
-        return Err(FetchRunError::Query(MultiplierQueryError {
-            code: "config_changed".into(),
-            message: "刷新 token 期间配置已编辑或停用，本轮未更新账号倍率".into(),
-            http_status: None,
-        }));
-    };
-    *config = updated;
-    tracing::info!(config_id = %config.id, "倍率监控 token 已自动刷新");
-    multiplier_query::fetch_all(&config.url, &config.token, settings)
-        .await
-        .map_err(FetchRunError::Query)
-}
-
-async fn finish_query_failure(
-    pool: &SqlitePool,
-    config: &MultiplierMonitorConfig,
-    owner: &str,
-    started_at: &str,
-    started: std::time::Instant,
-    error: MultiplierQueryError,
-) -> Result<MultiplierMonitorCheckResult, AppError> {
-    let finished_at = utc_now_string();
-    let run_id = Uuid::new_v4().to_string();
-    let message = truncate_error(&error.message);
-    let log = MultiplierMonitorLog {
-        id: Uuid::new_v4().to_string(),
-        run_id: run_id.clone(),
-        config_id: config.id.clone(),
-        config_name: config.name.clone(),
-        account_id: None,
-        account_name: None,
-        started_at: started_at.into(),
-        finished_at: finished_at.clone(),
-        duration_ms: Some(elapsed_millis(started)),
-        result: "failed".into(),
-        old_multiplier: None,
-        remote_multiplier: None,
-        error_code: Some(error.code),
-        error_message: Some(message),
-        http_status: error.http_status,
-    };
-    multiplier_monitor_dao::insert_log_and_release(pool, &log, &config.id, owner, &finished_at)
-        .await?;
-    Ok(summarize(&run_id, &[log]))
-}
-
-fn remote_map(
-    remote: Vec<RemoteMultiplier>,
-    multiplier_divisor: i64,
-) -> Result<HashMap<String, ParsedRemoteRate>, MultiplierQueryError> {
-    let mut result: HashMap<String, ParsedRemoteRate> = HashMap::with_capacity(remote.len());
-    for item in remote {
-        let parsed = parse_remote_rate(&item, multiplier_divisor);
-        if let Some(existing) = result.get(&item.key) {
-            if existing.decimal != parsed.decimal || existing.error != parsed.error {
-                return Err(MultiplierQueryError {
-                    code: "duplicate_key_conflict".into(),
-                    message: "远端返回了倍率不一致的重复 key".into(),
-                    http_status: None,
-                });
-            }
-            continue;
-        }
-        result.insert(item.key, parsed);
-    }
-    Ok(result)
-}
-
-fn parse_remote_rate(item: &RemoteMultiplier, multiplier_divisor: i64) -> ParsedRemoteRate {
-    if let Some(error) = item.rate_error.as_deref() {
-        return ParsedRemoteRate {
-            decimal: None,
-            value: None,
-            error: Some(error.into()),
-        };
-    }
-    let Some(raw) = item.rate_multiplier.as_deref() else {
-        return ParsedRemoteRate {
-            decimal: None,
-            value: None,
-            error: Some("远端未返回 rate_multiplier".into()),
-        };
-    };
-    let Ok(decimal) = Decimal::from_str(raw) else {
-        return ParsedRemoteRate {
-            decimal: None,
-            value: None,
-            error: Some("rate_multiplier 不是有效十进制数".into()),
-        };
-    };
-    if !(1..=MAX_MULTIPLIER_DIVISOR).contains(&multiplier_divisor) {
-        return ParsedRemoteRate {
-            decimal: None,
-            value: None,
-            error: Some("倍率除数配置无效".into()),
-        };
-    }
-    let normalized = (decimal / Decimal::from(multiplier_divisor)).normalize();
-    if normalized < Decimal::new(1, 2) || normalized > Decimal::new(99, 2) {
-        return ParsedRemoteRate {
-            decimal: None,
-            value: normalized.to_f64(),
-            error: Some(format!(
-                "rate_multiplier 除以 {multiplier_divisor} 后必须在 0.01～0.99 之间"
-            )),
-        };
-    }
-    if normalized.scale() > 2 {
-        return ParsedRemoteRate {
-            decimal: None,
-            value: normalized.to_f64(),
-            error: Some(format!(
-                "rate_multiplier 除以 {multiplier_divisor} 后最多保留两位小数"
-            )),
-        };
-    }
-    ParsedRemoteRate {
-        decimal: Some(normalized),
-        value: normalized.to_f64(),
-        error: None,
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn account_log(
-    run_id: &str,
-    config: &MultiplierMonitorConfig,
-    account_id: Option<String>,
-    account_name: Option<String>,
-    started_at: &str,
-    finished_at: &str,
-    duration_ms: i64,
-    result: &str,
-    old_multiplier: Option<f64>,
-    remote_multiplier: Option<f64>,
-    error_code: Option<&str>,
-    error_message: Option<&str>,
-) -> MultiplierMonitorLog {
-    MultiplierMonitorLog {
-        id: Uuid::new_v4().to_string(),
-        run_id: run_id.into(),
-        config_id: config.id.clone(),
-        config_name: config.name.clone(),
-        account_id,
-        account_name,
-        started_at: started_at.into(),
-        finished_at: finished_at.into(),
-        duration_ms: Some(duration_ms),
-        result: result.into(),
-        old_multiplier,
-        remote_multiplier,
-        error_code: error_code.map(str::to_owned),
-        error_message: error_message.map(truncate_error),
-        http_status: None,
-    }
-}
-
-fn summarize(run_id: &str, logs: &[MultiplierMonitorLog]) -> MultiplierMonitorCheckResult {
-    MultiplierMonitorCheckResult {
-        run_id: run_id.into(),
-        total: logs.len() as i64,
-        updated: logs.iter().filter(|log| log.result == "updated").count() as i64,
-        unchanged: logs.iter().filter(|log| log.result == "unchanged").count() as i64,
-        issues: logs
-            .iter()
-            .filter(|log| !matches!(log.result.as_str(), "updated" | "unchanged" | "failed"))
-            .count() as i64,
-        failed: logs.iter().filter(|log| log.result == "failed").count() as i64,
-    }
-}
-
-async fn to_view(
-    pool: &SqlitePool,
-    config: MultiplierMonitorConfig,
-    now: &str,
-) -> Result<MultiplierMonitorConfigView, AppError> {
-    let stats = multiplier_monitor_dao::latest_run_stats(pool, &config.id).await?;
-    Ok(MultiplierMonitorConfigView {
-        id: config.id,
-        name: config.name,
-        url: config.url,
-        account_ids: parse_account_ids(&config.account_ids)?,
-        multiplier_divisor: config.multiplier_divisor,
-        enabled: config.enabled,
-        has_token: !config.token.is_empty(),
-        has_refresh_token: !config.refresh_token.is_empty(),
-        last_started_at: config.last_started_at,
-        last_finished_at: config.last_finished_at,
-        running: config
-            .lease_until
-            .as_deref()
-            .is_some_and(|lease_until| lease_until > now),
-        last_run: stats.map(|value| MultiplierMonitorRunSummary {
-            run_id: value.run_id,
-            started_at: value.started_at,
-            finished_at: value.finished_at,
-            total: value.total,
-            updated: value.updated,
-            unchanged: value.unchanged,
-            issues: value.issues,
-            failed: value.failed,
-        }),
-        created_at: config.created_at,
-        updated_at: config.updated_at,
+    .await?;
+    let updated = i64::from(log.result == "updated");
+    let unchanged = i64::from(matches!(log.result.as_str(), "unchanged" | "observed"));
+    let issues = i64::from(matches!(log.result.as_str(), "conflict"));
+    let failed = i64::from(log.result == "failed");
+    Ok(MultiplierMonitorCheckResult {
+        run_id,
+        total: 1,
+        updated,
+        unchanged,
+        issues,
+        failed,
     })
 }
 
-fn validate_name(value: &str) -> Result<String, AppError> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Err(AppError::BadRequest("配置名称不能为空".into()));
+async fn fetch_rate(
+    settings: &Settings,
+    account: &crate::model::multiplier_monitor::MultiplierMonitorEntry,
+    config: &MultiplierMonitorConfig,
+) -> Result<RemoteMultiplier, MultiplierQueryError> {
+    if account.account_status != "active" {
+        return Err(MultiplierQueryError {
+            code: "account_disabled".into(),
+            message: "账号已停用".into(),
+            http_status: None,
+        });
     }
-    if value.chars().count() > 100 {
-        return Err(AppError::BadRequest("配置名称不能超过 100 个字符".into()));
-    }
-    Ok(value.into())
-}
-
-fn validate_url(value: &str) -> Result<String, AppError> {
-    let value = value.trim();
-    multiplier_query::normalize_base_url(value).map_err(|error| AppError::BadRequest(error.message))
-}
-
-fn normalize_token(value: &str) -> Result<String, AppError> {
-    let value = value.trim();
-    let value = value
-        .get(..7)
-        .filter(|prefix| prefix.eq_ignore_ascii_case("Bearer "))
-        .map(|_| value[7..].trim())
-        .unwrap_or(value);
-    if value.is_empty() {
-        return Err(AppError::BadRequest("查询 token 不能为空".into()));
-    }
-    Ok(value.into())
-}
-
-fn normalize_refresh_token(value: &str) -> Result<String, AppError> {
-    Ok(value.trim().into())
-}
-
-fn validate_multiplier_divisor(value: i64) -> Result<i64, AppError> {
-    if !(1..=MAX_MULTIPLIER_DIVISOR).contains(&value) {
-        return Err(AppError::BadRequest(format!(
-            "倍率除数必须是 1～{MAX_MULTIPLIER_DIVISOR} 的整数"
-        )));
-    }
-    Ok(value)
-}
-
-fn normalize_account_ids(values: Vec<String>) -> Result<Vec<String>, AppError> {
-    let mut result = Vec::new();
-    for value in values {
-        let value = value.trim();
-        if !value.is_empty() && !result.iter().any(|existing| existing == value) {
-            result.push(value.to_owned());
+    match config.platform_type.as_str() {
+        "sub2api" => {
+            multiplier_query::fetch_sub2api_billing(&account.base_url, &account.api_key, settings)
+                .await
         }
+        "newapi" => {
+            let group = config
+                .new_api_group
+                .as_deref()
+                .ok_or_else(|| MultiplierQueryError {
+                    code: "group_required".into(),
+                    message: "New API 未配置组".into(),
+                    http_status: None,
+                })?;
+            let rate =
+                multiplier_query::fetch_newapi_rate(&account.base_url, group, settings).await?;
+            Ok(RemoteMultiplier {
+                key: account.api_key.clone(),
+                rate_multiplier: Some(rate),
+                rate_error: None,
+            })
+        }
+        _ => Err(MultiplierQueryError {
+            code: "unsupported_platform".into(),
+            message: "不支持的上游平台".into(),
+            http_status: None,
+        }),
     }
-    if result.is_empty() {
-        return Err(AppError::BadRequest("请至少选择一个账号".into()));
-    }
-    if result.len() > MAX_ACCOUNT_COUNT {
-        return Err(AppError::BadRequest("选择的账号数量超过上限".into()));
-    }
-    Ok(result)
 }
 
-fn parse_account_ids(raw: &str) -> Result<Vec<String>, AppError> {
-    serde_json::from_str(raw).map_err(|_| AppError::Internal("倍率监控配置的账号列表无效".into()))
-}
-
-async fn validate_accounts(pool: &SqlitePool, account_ids: &[String]) -> Result<(), AppError> {
-    let accounts = multiplier_monitor_dao::get_accounts_by_ids(pool, account_ids).await?;
-    if accounts.len() != account_ids.len() {
-        return Err(AppError::BadRequest("所选账号中存在已删除的账号".into()));
+fn parse_rate(remote: &RemoteMultiplier, divisor: i64) -> Result<f64, String> {
+    if let Some(error) = remote.rate_error.as_deref() {
+        return Err(error.to_owned());
     }
-    Ok(())
+    let raw = remote
+        .rate_multiplier
+        .as_deref()
+        .ok_or_else(|| "上游未返回有效倍率".to_owned())?;
+    let value = Decimal::from_str(raw).map_err(|_| "上游倍率不是有效数字".to_owned())?
+        / Decimal::from(divisor);
+    if value < Decimal::new(1, 2) || value > Decimal::new(99, 2) || value.scale() > 2 {
+        return Err(format!(
+            "倍率除以 {divisor} 后必须在 0.01～0.99 且最多两位小数"
+        ));
+    }
+    value.to_f64().ok_or_else(|| "上游倍率无法转换".to_owned())
 }
 
-async fn validate_enabled_conflicts(
-    pool: &SqlitePool,
-    current_id: Option<&str>,
-    enabled: bool,
-    account_ids: &[String],
+fn view(
+    entry: &crate::model::multiplier_monitor::MultiplierMonitorEntry,
+    now: &str,
+) -> Result<MultiplierMonitorConfigView, AppError> {
+    Ok(MultiplierMonitorConfigView {
+        id: entry
+            .config_id
+            .clone()
+            .unwrap_or_else(|| entry.account_id.clone()),
+        account_id: entry.account_id.clone(),
+        account_name: entry.account_name.clone(),
+        account_type: entry.account_type.clone(),
+        account_status: entry.account_status.clone(),
+        account_multiplier: entry.account_multiplier,
+        configured: entry.config_id.is_some(),
+        platform_type: entry
+            .platform_type
+            .clone()
+            .unwrap_or_else(|| "sub2api".into()),
+        new_api_group: entry.new_api_group.clone(),
+        sync_upstream_multiplier: entry.sync_upstream_multiplier.unwrap_or(false),
+        multiplier_divisor: entry.multiplier_divisor.unwrap_or(1),
+        enabled: entry.enabled.unwrap_or(false),
+        last_started_at: entry.last_started_at.clone(),
+        last_finished_at: entry.last_finished_at.clone(),
+        last_success_at: entry.last_success_at.clone(),
+        last_error: entry.last_error.clone(),
+        last_remote_multiplier: entry.last_remote_multiplier,
+        last_result: entry.last_result.clone(),
+        running: entry
+            .lease_until
+            .as_deref()
+            .is_some_and(|until| until > now),
+        last_run: None,
+        created_at: entry
+            .config_created_at
+            .clone()
+            .unwrap_or_else(|| now.into()),
+        updated_at: entry
+            .config_updated_at
+            .clone()
+            .unwrap_or_else(|| now.into()),
+    })
+}
+
+fn validate(
+    account_id: &str,
+    platform: &str,
+    group: Option<&str>,
+    divisor: i64,
 ) -> Result<(), AppError> {
-    if !enabled {
-        return Ok(());
+    if account_id.trim().is_empty() {
+        return Err(AppError::BadRequest("账号不能为空".into()));
     }
-    for config in multiplier_monitor_dao::list_configs(pool).await? {
-        if !config.enabled || current_id == Some(config.id.as_str()) {
-            continue;
-        }
-        let existing = parse_account_ids(&config.account_ids)?;
-        if account_ids.iter().any(|id| existing.contains(id)) {
-            return Err(AppError::BadRequest(format!(
-                "所选账号已被启用的配置“{}”监控",
-                config.name
-            )));
-        }
+    if !matches!(platform, "sub2api" | "newapi") {
+        return Err(AppError::BadRequest(
+            "平台类型只能是 sub2api 或 newapi".into(),
+        ));
+    }
+    if platform == "newapi" && group.map(str::trim).unwrap_or("").is_empty() {
+        return Err(AppError::BadRequest("New API 必须选择组".into()));
+    }
+    if !(1..=MAX_MULTIPLIER_DIVISOR).contains(&divisor) {
+        return Err(AppError::BadRequest(
+            "倍率除数必须是 1～10000 的整数".into(),
+        ));
     }
     Ok(())
 }
 
-fn truncate_error(value: &str) -> String {
-    value.chars().take(MAX_ERROR_LENGTH).collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{normalize_token, parse_remote_rate, validate_multiplier_divisor};
-    use crate::service::multiplier_query::RemoteMultiplier;
-
-    #[test]
-    fn strips_optional_bearer_prefix_before_storage() {
-        assert_eq!(normalize_token("Bearer abc").unwrap(), "abc");
-        assert_eq!(normalize_token("abc").unwrap(), "abc");
-    }
-
-    #[test]
-    fn validates_remote_decimal_range_and_scale() {
-        let valid = parse_remote_rate(
-            &RemoteMultiplier {
-                key: "key".into(),
-                rate_multiplier: Some("0.300".into()),
-                rate_error: None,
-            },
-            1,
-        );
-        assert!(valid.error.is_none());
-        let invalid = parse_remote_rate(
-            &RemoteMultiplier {
-                key: "key".into(),
-                rate_multiplier: Some("0.301".into()),
-                rate_error: None,
-            },
-            1,
-        );
-        assert!(invalid.error.is_some());
-    }
-
-    #[test]
-    fn divides_remote_rate_before_validation() {
-        let parsed = parse_remote_rate(
-            &RemoteMultiplier {
-                key: "key".into(),
-                rate_multiplier: Some("3".into()),
-                rate_error: None,
-            },
-            10,
-        );
-        assert!(parsed.error.is_none());
-        assert_eq!(parsed.decimal.unwrap().to_string(), "0.3");
-
-        let too_precise = parse_remote_rate(
-            &RemoteMultiplier {
-                key: "key".into(),
-                rate_multiplier: Some("3.01".into()),
-                rate_error: None,
-            },
-            10,
-        );
-        assert!(too_precise.error.is_some());
-    }
-
-    #[test]
-    fn validates_multiplier_divisor_range() {
-        assert_eq!(validate_multiplier_divisor(1).unwrap(), 1);
-        assert_eq!(validate_multiplier_divisor(10_000).unwrap(), 10_000);
-        assert!(validate_multiplier_divisor(0).is_err());
-        assert!(validate_multiplier_divisor(10_001).is_err());
-    }
+fn due_time(now: chrono::DateTime<Utc>) -> String {
+    utc_datetime_string(now - ChronoDuration::hours(SCHEDULE_INTERVAL_HOURS))
 }

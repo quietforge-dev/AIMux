@@ -1,50 +1,35 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
-pub struct MultiplierMonitorCreate {
-    pub name: String,
-    pub url: String,
-    pub token: String,
-    #[serde(default)]
-    pub refresh_token: String,
-    pub account_ids: Vec<String>,
-    #[serde(default = "default_multiplier_divisor")]
-    pub multiplier_divisor: i64,
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct MultiplierMonitorUpdate {
-    pub name: String,
-    pub url: String,
-    pub token: Option<String>,
-    pub refresh_token: Option<String>,
-    pub account_ids: Vec<String>,
+    pub platform_type: Option<String>,
+    pub new_api_group: Option<String>,
+    pub sync_upstream_multiplier: Option<bool>,
     pub multiplier_divisor: Option<i64>,
-    pub enabled: bool,
-}
-
-fn default_enabled() -> bool {
-    true
-}
-
-fn default_multiplier_divisor() -> i64 {
-    1
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MultiplierMonitorConfigView {
     pub id: String,
-    pub name: String,
-    pub url: String,
-    pub account_ids: Vec<String>,
+    pub account_id: String,
+    pub account_name: String,
+    #[serde(rename = "account_type")]
+    pub account_type: String,
+    pub account_status: String,
+    pub account_multiplier: f64,
+    pub configured: bool,
+    pub platform_type: String,
+    pub new_api_group: Option<String>,
+    pub sync_upstream_multiplier: bool,
     pub multiplier_divisor: i64,
     pub enabled: bool,
-    pub has_token: bool,
-    pub has_refresh_token: bool,
     pub last_started_at: Option<String>,
     pub last_finished_at: Option<String>,
+    pub last_success_at: Option<String>,
+    pub last_error: Option<String>,
+    pub last_remote_multiplier: Option<f64>,
+    pub last_result: Option<String>,
     pub running: bool,
     pub last_run: Option<MultiplierMonitorRunSummary>,
     pub created_at: String,
@@ -61,16 +46,6 @@ pub struct MultiplierMonitorRunSummary {
     pub unchanged: i64,
     pub issues: i64,
     pub failed: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct MultiplierMonitorAccountOption {
-    pub id: String,
-    pub name: String,
-    #[serde(rename = "type")]
-    pub account_type: String,
-    pub status: String,
-    pub multiplier: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]

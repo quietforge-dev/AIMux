@@ -187,6 +187,10 @@ pub async fn update(
 }
 
 pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM multiplier_monitor_configs WHERE account_id=?")
+        .bind(id)
+        .execute(pool)
+        .await?;
     sqlx::query("DELETE FROM accounts WHERE id=?")
         .bind(id)
         .execute(pool)

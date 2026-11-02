@@ -1,5 +1,9 @@
 <template>
-  <el-dialog v-model="visible" :title="`倍率监控日志 · ${config?.name ?? ''}`" width="980px">
+  <el-dialog
+    v-model="visible"
+    :title="`倍率监控日志 · ${config?.account_name ?? ''}`"
+    width="980px"
+  >
     <div class="log-toolbar">
       <el-select v-model="resultFilter" clearable placeholder="全部结果" @change="reload">
         <el-option v-for="option in resultOptions" :key="option.value" v-bind="option" />
@@ -66,6 +70,7 @@ const resultFilter = ref('');
 
 const resultOptions = [
   { label: '已更新', value: 'updated' },
+  { label: '倍率有差异（未同步）', value: 'observed' },
   { label: '无变化', value: 'unchanged' },
   { label: '未匹配密钥', value: 'missing_key' },
   { label: '倍率无效', value: 'invalid_rate' },

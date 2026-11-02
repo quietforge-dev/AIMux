@@ -4,18 +4,14 @@
       <div>
         <h2 class="page-title">倍率监控</h2>
         <div class="page-description">
-          每小时查询远端密钥倍率，仅在倍率变化且数据有效时更新账号。
+          按账号检查 Sub2API 或 New API 倍率，同步到本地倍率默认关闭。
         </div>
       </div>
       <div class="page-actions">
         <el-button :loading="loading" @click="load">刷新</el-button>
-        <el-button :disabled="!hasCustomWidths" @click="resetColumnWidths">
-          恢复默认列宽
-        </el-button>
-        <el-button type="primary" @click="open()">新增配置</el-button>
+        <el-button :disabled="!hasCustomWidths" @click="resetColumnWidths">恢复默认列宽</el-button>
       </div>
     </div>
-
     <el-table
       :key="tableKey"
       :data="items"
@@ -25,57 +21,58 @@
       @header-dragend="handleColumnResize"
     >
       <el-table-column
-        column-key="name"
-        prop="name"
-        label="配置名称"
-        :width="columnWidth('name', 180)"
+        column-key="account"
+        prop="account_name"
+        label="账号"
+        :width="columnWidth('account', 190)"
         fixed="left"
+        show-overflow-tooltip
       />
+      <el-table-column column-key="protocol" label="协议" :width="columnWidth('protocol', 105)">
+        <template #default="{ row }">{{ row.account_type }}</template>
+      </el-table-column>
+      <el-table-column column-key="platform" label="上游平台" :width="columnWidth('platform', 120)">
+        <template #default="{ row }">{{
+          row.configured ? (row.platform_type === 'newapi' ? 'New API' : 'Sub2API') : '未配置'
+        }}</template>
+      </el-table-column>
       <el-table-column
-        column-key="url"
-        label="查询 URL"
-        :width="columnWidth('url')"
-        min-width="260"
+        column-key="group"
+        label="New API 分组"
+        :width="columnWidth('group', 150)"
         show-overflow-tooltip
       >
-        <template #default="{ row }">{{ displayUrl(row.url) }}</template>
+        <template #default="{ row }">{{
+          row.platform_type === 'newapi' ? row.new_api_group || '-' : '-'
+        }}</template>
       </el-table-column>
-      <el-table-column
-        column-key="accounts"
-        label="监控账号"
-        :width="columnWidth('accounts', 220)"
-        show-overflow-tooltip
-      >
+      <el-table-column column-key="current" label="本地倍率" :width="columnWidth('current', 100)">
+        <template #default="{ row }">{{ row.account_multiplier.toFixed(2) }}</template>
+      </el-table-column>
+      <el-table-column column-key="remote" label="上游倍率" :width="columnWidth('remote', 100)">
         <template #default="{ row }">
-          <span>{{ accountSummary(row.account_ids) }}</span>
+          {{
+            row.last_remote_multiplier == null ? '-' : Number(row.last_remote_multiplier).toFixed(2)
+          }}
         </template>
       </el-table-column>
-      <el-table-column
-        column-key="multiplierDivisor"
-        label="倍率换算"
-        :width="columnWidth('multiplierDivisor', 105)"
-      >
-        <template #default="{ row }">返回值 ÷{{ row.multiplier_divisor }}</template>
+      <el-table-column column-key="sync" label="同步倍率" :width="columnWidth('sync', 105)">
+        <template #default="{ row }"
+          ><el-tag
+            v-if="row.configured"
+            :type="row.sync_upstream_multiplier ? 'warning' : 'info'"
+            size="small"
+            >{{ row.sync_upstream_multiplier ? '开启' : '关闭' }}</el-tag
+          ><span v-else class="muted">-</span></template
+        >
       </el-table-column>
-      <el-table-column
-        column-key="refreshToken"
-        label="自动刷新"
-        :width="columnWidth('refreshToken', 105)"
-      >
-        <template #default="{ row }">
-          <el-tag :type="row.has_refresh_token ? 'success' : 'info'" size="small">
-            {{ row.has_refresh_token ? '已配置' : '未配置' }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column column-key="enabled" label="状态" :width="columnWidth('enabled', 90)">
-        <template #default="{ row }">
-          <el-switch
+      <el-table-column column-key="enabled" label="监控" :width="columnWidth('enabled', 100)">
+        <template #default="{ row }"
+          ><el-switch
             :model-value="row.enabled"
-            :loading="togglingIds.has(row.id)"
+            :loading="busyIds.has(row.account_id)"
             @change="toggle(row)"
-          />
-        </template>
+        /></template>
       </el-table-column>
       <el-table-column
         column-key="lastCheck"
@@ -87,215 +84,227 @@
       <el-table-column
         column-key="lastResult"
         label="最近结果"
-        :width="columnWidth('lastResult', 180)"
+        min-width="150"
+        show-overflow-tooltip
       >
         <template #default="{ row }">
-          <el-tag v-if="isChecking(row)" type="warning">正在检查</el-tag>
-          <template v-else-if="row.last_run">
-            <el-tag :type="summaryType(row.last_run)">{{ summaryLabel(row.last_run) }}</el-tag>
-          </template>
+          <el-tag v-if="row.running || busyIds.has(row.account_id)" type="warning">正在检查</el-tag>
+          <el-tag v-else-if="row.last_error" type="danger">{{ row.last_error }}</el-tag>
+          <el-tag v-else-if="row.last_result === 'observed'" type="warning"
+            >发现差异（未同步）</el-tag
+          >
+          <el-tag v-else-if="row.last_success_at" type="success">检查成功</el-tag>
           <span v-else class="muted">尚未检查</span>
         </template>
       </el-table-column>
       <el-table-column
         column-key="actions"
         label="操作"
-        :width="columnWidth('actions', 220)"
+        :width="columnWidth('actions', 210)"
         fixed="right"
       >
         <template #default="{ row }">
-          <el-button link type="primary" @click="open(row)">编辑</el-button>
+          <el-button link type="primary" @click="edit(row)">配置</el-button>
           <el-button
             link
             type="primary"
-            :loading="checkingIds.has(row.id)"
-            :disabled="!row.enabled || isChecking(row)"
+            :disabled="!row.enabled || busyIds.has(row.account_id)"
+            :loading="checkingIds.has(row.account_id)"
             @click="check(row)"
+            >立即检查</el-button
           >
-            立即检查
-          </el-button>
           <el-button link type="primary" @click="openLogs(row)">日志</el-button>
         </template>
       </el-table-column>
     </el-table>
-
-    <MultiplierMonitorFormDialog
-      v-model:visible="formVisible"
-      :config="editingConfig"
-      :options="accountOptions"
-      :used-account-ids="usedAccountIds"
-      :saving="saving"
-      @save="save"
-    />
+    <el-dialog
+      v-model="formVisible"
+      title="倍率监控配置"
+      width="560px"
+      :close-on-click-modal="false"
+    >
+      <el-form v-if="editing" label-width="130px">
+        <el-form-item label="账号"
+          ><span>{{ editing.account_name }}</span></el-form-item
+        >
+        <el-form-item label="账号协议"
+          ><span>{{ editing.account_type }}</span></el-form-item
+        >
+        <el-form-item label="上游平台">
+          <el-select v-model="form.platform_type" @change="loadGroups">
+            <el-option label="Sub2API" value="sub2api" />
+            <el-option label="New API" value="newapi" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="form.platform_type === 'newapi'" label="New API 分组">
+          <el-select
+            v-model="form.new_api_group"
+            :loading="groupsLoading"
+            placeholder="选择上游分组"
+            filterable
+          >
+            <el-option
+              v-for="group in groups"
+              :key="group.name"
+              :label="`${group.name} (${group.rate})`"
+              :value="group.name"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="倍率除数">
+          <el-input-number v-model="form.multiplier_divisor" :min="1" :max="10000" :precision="0" />
+        </el-form-item>
+        <el-form-item label="同步上游倍率"
+          ><el-switch v-model="form.sync_upstream_multiplier"
+        /></el-form-item>
+        <el-form-item label="说明"
+          ><span class="hint">关闭时只记录上游倍率，不修改账号本地倍率。</span></el-form-item
+        >
+      </el-form>
+      <template #footer>
+        <el-button @click="formVisible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+      </template>
+    </el-dialog>
     <MultiplierMonitorLogDialog v-model:visible="logVisible" :config="logConfig" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
   multiplierMonitorApi,
-  type MultiplierMonitorAccountOption,
   type MultiplierMonitorConfig,
-  type MultiplierMonitorCreate,
-  type MultiplierMonitorRunSummary,
-  type MultiplierMonitorUpdate,
+  type NewApiGroup,
 } from '../../api/multiplierMonitor';
-import MultiplierMonitorFormDialog from '../../components/multiplier-monitor/MultiplierMonitorFormDialog.vue';
 import MultiplierMonitorLogDialog from '../../components/multiplier-monitor/MultiplierMonitorLogDialog.vue';
 import { useTableColumnWidths } from '../../composables/useTableColumnWidths';
 
 const { tableKey, hasCustomWidths, columnWidth, handleColumnResize, resetColumnWidths } =
   useTableColumnWidths('multiplier-monitor');
 const items = ref<MultiplierMonitorConfig[]>([]);
-const accountOptions = ref<MultiplierMonitorAccountOption[]>([]);
 const loading = ref(false);
 const saving = ref(false);
 const formVisible = ref(false);
-const editingConfig = ref<MultiplierMonitorConfig>();
+const editing = ref<MultiplierMonitorConfig>();
+const form = reactive({
+  platform_type: 'sub2api' as 'sub2api' | 'newapi',
+  new_api_group: '',
+  multiplier_divisor: 1,
+  sync_upstream_multiplier: false,
+});
+const groups = ref<NewApiGroup[]>([]);
+const groupsLoading = ref(false);
+const busyIds = ref(new Set<string>());
+const checkingIds = ref(new Set<string>());
 const logVisible = ref(false);
 const logConfig = ref<MultiplierMonitorConfig>();
-const checkingIds = ref(new Set<string>());
-const togglingIds = ref(new Set<string>());
-const usedAccountIds = computed(() => [
-  ...new Set(
-    items.value
-      .filter((config) => config.id !== editingConfig.value?.id)
-      .flatMap((config) => config.account_ids),
-  ),
-]);
 
 const load = async () => {
   loading.value = true;
   try {
     items.value = (await multiplierMonitorApi.list()).items;
-  } catch (error) {
-    ElMessage.error(String(error));
+  } catch (e) {
+    ElMessage.error(String(e));
   } finally {
     loading.value = false;
   }
 };
-
-const loadAccountOptions = async () => {
+const loadGroups = async () => {
+  if (!editing.value || form.platform_type !== 'newapi') {
+    groups.value = [];
+    return;
+  }
+  groupsLoading.value = true;
   try {
-    accountOptions.value = (await multiplierMonitorApi.accountOptions()).items;
-  } catch (error) {
-    ElMessage.error(String(error));
+    groups.value = (await multiplierMonitorApi.newApiGroups(editing.value.account_id)).items;
+    if (!groups.value.some((g) => g.name === form.new_api_group)) form.new_api_group = '';
+  } catch (e) {
+    groups.value = [];
+    ElMessage.error(`读取 New API 分组失败：${String(e)}`);
+  } finally {
+    groupsLoading.value = false;
   }
 };
-
-const open = async (config?: MultiplierMonitorConfig) => {
-  if (!accountOptions.value.length) await loadAccountOptions();
-  editingConfig.value = config;
+const edit = async (row: MultiplierMonitorConfig) => {
+  editing.value = row;
+  Object.assign(form, {
+    platform_type: row.platform_type,
+    new_api_group: row.new_api_group ?? '',
+    multiplier_divisor: row.multiplier_divisor,
+    sync_upstream_multiplier: row.sync_upstream_multiplier,
+  });
   formVisible.value = true;
+  if (form.platform_type === 'newapi') await loadGroups();
 };
-
-const save = async (payload: MultiplierMonitorCreate | MultiplierMonitorUpdate) => {
+const save = async () => {
+  if (!editing.value) return;
+  if (form.platform_type === 'newapi' && !form.new_api_group) {
+    ElMessage.warning('请选择 New API 分组');
+    return;
+  }
   saving.value = true;
   try {
-    if (editingConfig.value) {
-      await multiplierMonitorApi.update(editingConfig.value.id, payload as MultiplierMonitorUpdate);
-    } else {
-      await multiplierMonitorApi.create(payload as MultiplierMonitorCreate);
-    }
+    await multiplierMonitorApi.update(editing.value.account_id, {
+      ...form,
+      new_api_group: form.platform_type === 'newapi' ? form.new_api_group : null,
+      enabled: editing.value.enabled,
+    });
     formVisible.value = false;
-    await Promise.all([load(), loadAccountOptions()]);
+    await load();
     ElMessage.success('倍率监控配置已保存');
-  } catch (error) {
-    ElMessage.error(String(error));
+  } catch (e) {
+    ElMessage.error(String(e));
   } finally {
     saving.value = false;
   }
 };
-
-const toggle = async (config: MultiplierMonitorConfig) => {
-  if (togglingIds.value.has(config.id)) return;
-  togglingIds.value = new Set(togglingIds.value).add(config.id);
-  try {
-    await multiplierMonitorApi.toggle(config.id);
-    await load();
-  } catch (error) {
-    ElMessage.error(String(error));
-  } finally {
-    const next = new Set(togglingIds.value);
-    next.delete(config.id);
-    togglingIds.value = next;
-  }
-};
-
-const check = async (config: MultiplierMonitorConfig) => {
-  if (checkingIds.value.has(config.id)) {
-    ElMessage.info('该配置正在检查，请稍候');
+const toggle = async (row: MultiplierMonitorConfig) => {
+  const id = row.account_id;
+  if (busyIds.value.has(id)) return;
+  if (!row.configured) {
+    ElMessage.info('请先配置上游平台');
+    await edit(row);
     return;
   }
-  checkingIds.value = new Set(checkingIds.value).add(config.id);
+  busyIds.value = new Set(busyIds.value).add(id);
   try {
-    const result = await multiplierMonitorApi.check(config.id);
-    if (result.failed) {
-      ElMessage.warning('检查失败，未更新账号倍率，请查看日志');
-    } else if (result.issues) {
-      ElMessage.warning(
-        `检查完成：更新 ${result.updated} 个，未变化 ${result.unchanged} 个，异常 ${result.issues} 个`,
-      );
-    } else {
-      ElMessage.success(`检查完成：更新 ${result.updated} 个，未变化 ${result.unchanged} 个`);
-    }
+    await multiplierMonitorApi.toggle(id);
     await load();
-  } catch (error) {
-    ElMessage.error(String(error));
+  } catch (e) {
+    ElMessage.error(String(e));
+  } finally {
+    const next = new Set(busyIds.value);
+    next.delete(id);
+    busyIds.value = next;
+  }
+};
+const check = async (row: MultiplierMonitorConfig) => {
+  const id = row.account_id;
+  if (checkingIds.value.has(id)) return;
+  checkingIds.value = new Set(checkingIds.value).add(id);
+  try {
+    const r = await multiplierMonitorApi.check(id);
+    if (r.failed) ElMessage.warning('检查失败，未更新账号倍率');
+    else if (r.updated) ElMessage.success('已同步上游倍率');
+    else ElMessage.success('检查完成，未修改账号倍率');
+    await load();
+  } catch (e) {
+    ElMessage.error(String(e));
   } finally {
     const next = new Set(checkingIds.value);
-    next.delete(config.id);
+    next.delete(id);
     checkingIds.value = next;
   }
 };
-
-const openLogs = (config: MultiplierMonitorConfig) => {
-  logConfig.value = config;
+const openLogs = (row: MultiplierMonitorConfig) => {
+  logConfig.value = row;
   logVisible.value = true;
 };
-
-const isChecking = (config: MultiplierMonitorConfig) =>
-  config.running || checkingIds.value.has(config.id);
-
-const accountSummary = (ids: string[]) => {
-  const names = ids
-    .map((id) => accountOptions.value.find((account) => account.id === id)?.name ?? '账号已删除')
-    .slice(0, 3);
-  const suffix = ids.length > 3 ? ` 等 ${ids.length} 个` : `（${ids.length} 个）`;
-  return names.length ? `${names.join('、')}${suffix}` : '-';
-};
-
-const displayUrl = (value: string) => {
-  try {
-    const url = new URL(value);
-    return `${url.origin}${url.pathname}${url.search ? '?***' : ''}`;
-  } catch {
-    return value;
-  }
-};
-
 const formatTime = (value?: string | null) =>
   value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '-';
-
-const summaryType = (summary: MultiplierMonitorRunSummary) => {
-  if (summary.failed) return 'danger';
-  if (summary.issues) return 'warning';
-  if (summary.updated) return 'success';
-  return 'info';
-};
-
-const summaryLabel = (summary: MultiplierMonitorRunSummary) => {
-  if (summary.failed) return '检查失败';
-  if (summary.issues) return `异常 ${summary.issues} 个`;
-  if (summary.updated) return `已更新 ${summary.updated} 个`;
-  return '倍率无变化';
-};
-
-onMounted(async () => {
-  await Promise.all([load(), loadAccountOptions()]);
-});
+onMounted(load);
 </script>
 
 <style scoped>
@@ -304,10 +313,13 @@ onMounted(async () => {
   color: #7b8494;
   font-size: 13px;
 }
-
 .page-actions {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+.hint {
+  color: #7b8494;
+  font-size: 12px;
 }
 </style>

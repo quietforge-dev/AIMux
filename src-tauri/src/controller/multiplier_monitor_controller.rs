@@ -10,22 +10,20 @@ use crate::{
     app_state::AppState,
     dao::multiplier_monitor_dao,
     error::AppError,
-    schema::multiplier_monitor_schema::{
-        MultiplierMonitorCreate, MultiplierMonitorLogQuery, MultiplierMonitorUpdate,
-    },
+    schema::multiplier_monitor_schema::{MultiplierMonitorLogQuery, MultiplierMonitorUpdate},
     service::multiplier_monitor_service,
 };
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/api/multiplier-monitors", get(list).post(create))
-        .route(
-            "/api/multiplier-monitors/account-options",
-            get(account_options),
-        )
+        .route("/api/multiplier-monitors", get(list))
         .route("/api/multiplier-monitors/{id}", get(get_one).put(update))
         .route("/api/multiplier-monitors/{id}/toggle", post(toggle))
         .route("/api/multiplier-monitors/{id}/check", post(check))
+        .route(
+            "/api/multiplier-monitors/{id}/newapi-groups",
+            get(newapi_groups),
+        )
         .route("/api/multiplier-monitors/{id}/logs", get(logs))
 }
 
@@ -41,16 +39,6 @@ async fn get_one(
 ) -> Result<Json<serde_json::Value>, AppError> {
     Ok(Json(
         serde_json::to_value(multiplier_monitor_service::get_view(&state.pool, &id).await?)
-            .map_err(|error| AppError::Internal(error.to_string()))?,
-    ))
-}
-
-async fn create(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<MultiplierMonitorCreate>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    Ok(Json(
-        serde_json::to_value(multiplier_monitor_service::create(&state.pool, payload).await?)
             .map_err(|error| AppError::Internal(error.to_string()))?,
     ))
 }
@@ -89,11 +77,13 @@ async fn check(
     ))
 }
 
-async fn account_options(
+async fn newapi_groups(
     State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let settings = state.settings.read().await.clone();
     Ok(Json(serde_json::json!({
-        "items": multiplier_monitor_dao::list_account_options(&state.pool).await?
+        "items": multiplier_monitor_service::newapi_groups(&state.pool, &settings, &id).await?
     })))
 }
 
@@ -102,11 +92,11 @@ async fn logs(
     Path(id): Path<String>,
     Query(query): Query<MultiplierMonitorLogQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    if multiplier_monitor_dao::get_config(&state.pool, &id)
+    if multiplier_monitor_dao::get_entry(&state.pool, &id)
         .await?
         .is_none()
     {
-        return Err(AppError::NotFound("倍率监控配置不存在".into()));
+        return Err(AppError::NotFound("账号不存在".into()));
     }
     let (items, total) = multiplier_monitor_dao::list_logs(
         &state.pool,

@@ -115,6 +115,7 @@ mod tests {
             include_str!("../../migrations/0009_multiplier_monitor_refresh_token.sql"),
             include_str!("../../migrations/0010_accounts_timed_disable.sql"),
             include_str!("../../migrations/0011_daily_usage_statistics.sql"),
+            include_str!("../../migrations/0012_rebuild_multiplier_monitor_configs.sql"),
         ] {
             sqlx::raw_sql(sql).execute(&pool).await.unwrap();
         }
