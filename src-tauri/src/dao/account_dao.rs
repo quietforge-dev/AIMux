@@ -71,6 +71,28 @@ pub async fn pick_one(
     model: Option<&str>,
     account_type: &str,
 ) -> Result<Option<Account>, AppError> {
+    let provider = match model {
+        Some(name) => super::model_dao::provider_for_model(pool, account_type, name).await?,
+        None => None,
+    };
+    pick_account(pool, model, account_type, provider.as_deref()).await
+}
+
+/// Monitoring compares ordinary candidates without applying the user's routing override.
+pub async fn pick_one_normal(
+    pool: &SqlitePool,
+    model: Option<&str>,
+    account_type: &str,
+) -> Result<Option<Account>, AppError> {
+    pick_account(pool, model, account_type, None).await
+}
+
+async fn pick_account(
+    pool: &SqlitePool,
+    model: Option<&str>,
+    account_type: &str,
+    provider: Option<&str>,
+) -> Result<Option<Account>, AppError> {
     expire_disabled(pool).await?;
     let accounts = sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE status='active' AND type=? ORDER BY priority DESC, multiplier ASC, monitor_average_duration_ms IS NULL ASC, monitor_average_duration_ms ASC, lower(name), id").bind(account_type).fetch_all(pool).await?;
     let mut eligible: Vec<Account> = accounts
@@ -78,14 +100,21 @@ pub async fn pick_one(
         .filter(|a| supported(a.supported_models.as_deref(), model))
         .collect();
     eligible.sort_by(|a, b| {
+        let is_super = |account: &Account| {
+            account.super_priority
+                && account.priority >= 5
+                && provider.is_some()
+                && account.provider.as_deref() == provider
+        };
         let a_explicit = model
             .map(|m| has_model(a.supported_models.as_deref(), m))
             .unwrap_or(false);
         let b_explicit = model
             .map(|m| has_model(b.supported_models.as_deref(), m))
             .unwrap_or(false);
-        b_explicit
-            .cmp(&a_explicit)
+        is_super(b)
+            .cmp(&is_super(a))
+            .then_with(|| b_explicit.cmp(&a_explicit))
             .then_with(|| b.priority.cmp(&a.priority))
             .then_with(|| a.multiplier.total_cmp(&b.multiplier))
             .then_with(|| {
@@ -124,8 +153,15 @@ pub async fn create(pool: &SqlitePool, payload: AccountCreate) -> Result<Account
     )?;
     let now = utc_now_string();
     let id = Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO accounts (id,name,type,base_url,api_key_encrypted,status,priority,multiplier,test_default_model,model_mappings,supported_models,tags,notes,total_requests,total_tokens,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0,0,?,?)")
-        .bind(&id).bind(payload.name.trim()).bind(&payload.account_type).bind(payload.base_url.trim_end_matches('/')).bind(payload.api_key).bind(payload.status).bind(payload.priority).bind(payload.multiplier).bind(payload.test_default_model).bind(json_text(payload.model_mappings)).bind(json_opt_vec(payload.supported_models)).bind(json_opt_vec(payload.tags)).bind(payload.notes).bind(&now).bind(&now).execute(pool).await?;
+    let provider = normalize_provider(payload.provider);
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if payload.super_priority {
+        clear_other_super_priorities(&mut tx, &id, &payload.account_type, provider.as_deref())
+            .await?;
+    }
+    sqlx::query("INSERT INTO accounts (id,name,type,base_url,api_key_encrypted,status,priority,multiplier,test_default_model,model_mappings,supported_models,tags,notes,total_requests,total_tokens,created_at,updated_at,provider,super_priority) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0,0,?,?,?,?)")
+        .bind(&id).bind(payload.name.trim()).bind(&payload.account_type).bind(payload.base_url.trim_end_matches('/')).bind(payload.api_key).bind(payload.status).bind(payload.priority).bind(payload.multiplier).bind(payload.test_default_model).bind(json_text(payload.model_mappings)).bind(json_opt_vec(payload.supported_models)).bind(json_opt_vec(payload.tags)).bind(payload.notes).bind(&now).bind(&now).bind(provider).bind(payload.super_priority).execute(&mut *tx).await?;
+    tx.commit().await?;
     get(pool, &id)
         .await?
         .ok_or_else(|| AppError::Internal("创建账号后读取失败".into()))
@@ -136,11 +172,25 @@ pub async fn update(
     current: Account,
     payload: AccountUpdate,
 ) -> Result<Account, AppError> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // Read after acquiring the write lock so a stale form cannot resurrect a replaced override.
+    let current = sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE id=?")
+        .bind(&current.id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| AppError::NotFound("账号不存在".into()))?;
     let current_id = current.id.clone();
     let name = payload.name.unwrap_or_else(|| current.name.clone());
     let account_type = payload
         .account_type
         .unwrap_or_else(|| current.r#type.clone());
+    let provider = match payload.provider {
+        Some(value) => normalize_provider(Some(value)),
+        None => current.provider.clone(),
+    };
+    let super_priority = payload
+        .super_priority
+        .unwrap_or(current.super_priority && provider.is_some());
     let base_url = payload.base_url.unwrap_or_else(|| current.base_url.clone());
     let api_key = payload
         .api_key
@@ -179,8 +229,13 @@ pub async fn update(
         multiplier,
     )?;
     let now = utc_now_string();
-    sqlx::query("UPDATE accounts SET name=?,type=?,base_url=?,api_key_encrypted=?,status=?,priority=?,multiplier=?,test_default_model=?,model_mappings=?,supported_models=?,tags=?,notes=?,updated_at=? WHERE id=?")
-        .bind(name).bind(account_type).bind(base_url.trim_end_matches('/')).bind(api_key).bind(status).bind(priority).bind(multiplier).bind(test_default_model).bind(model_mappings).bind(supported_models).bind(tags).bind(notes).bind(now).bind(&current_id).execute(pool).await?;
+    if super_priority {
+        clear_other_super_priorities(&mut tx, &current_id, &account_type, provider.as_deref())
+            .await?;
+    }
+    sqlx::query("UPDATE accounts SET name=?,type=?,base_url=?,api_key_encrypted=?,status=?,priority=?,multiplier=?,test_default_model=?,model_mappings=?,supported_models=?,tags=?,notes=?,updated_at=?,provider=?,super_priority=? WHERE id=?")
+        .bind(name).bind(account_type).bind(base_url.trim_end_matches('/')).bind(api_key).bind(status).bind(priority).bind(multiplier).bind(test_default_model).bind(model_mappings).bind(supported_models).bind(tags).bind(notes).bind(now).bind(provider).bind(super_priority).bind(&current_id).execute(&mut *tx).await?;
+    tx.commit().await?;
     get(pool, &current_id)
         .await?
         .ok_or_else(|| AppError::Internal("更新账号后读取失败".into()))
@@ -309,6 +364,8 @@ pub fn to_view(a: Account) -> AccountView {
         id: a.id,
         name: a.name,
         account_type: a.r#type,
+        provider: a.provider,
+        super_priority: a.super_priority,
         base_url: a.base_url,
         api_key: a.api_key_encrypted,
         status: a.status,
@@ -334,6 +391,52 @@ pub fn to_view(a: Account) -> AccountView {
         created_at: a.created_at,
         updated_at: a.updated_at,
     }
+}
+
+fn normalize_provider(provider: Option<String>) -> Option<String> {
+    provider
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+async fn clear_other_super_priorities(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: &str,
+    account_type: &str,
+    provider: Option<&str>,
+) -> Result<(), AppError> {
+    let provider = provider
+        .ok_or_else(|| AppError::BadRequest("请先指定账号供应商，再开启超级优先".into()))?;
+    sqlx::query("UPDATE accounts SET super_priority=0,updated_at=? WHERE type=? AND provider=? AND id<>? AND super_priority<>0")
+        .bind(utc_now_string()).bind(account_type).bind(provider).bind(id).execute(&mut **tx).await?;
+    Ok(())
+}
+
+pub async fn set_super_priority(
+    pool: &SqlitePool,
+    id: &str,
+    enabled: bool,
+) -> Result<Account, AppError> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let current = sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE id=?")
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| AppError::NotFound("账号不存在".into()))?;
+    if enabled {
+        clear_other_super_priorities(&mut tx, id, &current.r#type, current.provider.as_deref())
+            .await?;
+    }
+    sqlx::query("UPDATE accounts SET super_priority=?,updated_at=? WHERE id=?")
+        .bind(enabled)
+        .bind(utc_now_string())
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    get(pool, id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("账号不存在".into()))
 }
 fn json_text(value: Option<Value>) -> Option<String> {
     value.and_then(|v| {
@@ -363,3 +466,7 @@ fn validate(name: &str, typ: &str, url: &str, key: &str, p: i64, m: f64) -> Resu
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "account_dao_tests.rs"]
+mod tests;

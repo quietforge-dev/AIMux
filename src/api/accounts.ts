@@ -3,6 +3,8 @@ export type Account = {
   id: string;
   name: string;
   type: 'openai' | 'anthropic';
+  provider?: string | null;
+  super_priority?: boolean;
   base_url: string;
   api_key: string;
   status: 'active' | 'disabled';
@@ -44,6 +46,8 @@ export const accountsApi = {
     }),
   priority: (id: string, priority: number) =>
     post<Account>(`/api/accounts/${id}/adjust-priority?priority=${priority}`),
+  setSuperPriority: (id: string, enabled: boolean) =>
+    post<Account>(`/api/accounts/${id}/super-priority`, { enabled }),
   test: (id: string, model?: string, signal?: AbortSignal) =>
     post<AccountTestResult>(`/api/accounts/${id}/test`, { model }, { signal }),
   discoverModels: (account: Pick<Account, 'type' | 'base_url' | 'api_key'>) =>

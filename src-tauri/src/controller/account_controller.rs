@@ -3,8 +3,8 @@ use crate::{
     dao::account_dao,
     error::AppError,
     schema::account_schema::{
-        AccountCreate, AccountStatusRequest, AccountUpdate, DiscoverModelsRequest,
-        DiscoverModelsResponse, TestRequest,
+        AccountCreate, AccountStatusRequest, AccountSuperPriorityRequest, AccountUpdate,
+        DiscoverModelsRequest, DiscoverModelsResponse, TestRequest,
     },
     service::{account_model_discovery_service, account_probe_service, account_service},
     upstream::error::response_body,
@@ -38,6 +38,10 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/api/accounts/{id}/toggle-status", post(toggle))
         .route("/api/accounts/{id}/set-status", post(set_status))
         .route("/api/accounts/{id}/adjust-priority", post(adjust))
+        .route(
+            "/api/accounts/{id}/super-priority",
+            post(set_super_priority),
+        )
         .route("/api/accounts/{id}/test", post(test))
         .route("/api/accounts/discover-models", post(discover_models))
 }
@@ -71,7 +75,10 @@ async fn create(
     Json(p): Json<AccountCreate>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     Ok(Json(
-        serde_json::to_value(account_dao::to_view(account_dao::create(&s.pool, p).await?)).unwrap(),
+        serde_json::to_value(account_dao::to_view(
+            account_service::create(&s.pool, p).await?,
+        ))
+        .unwrap(),
     ))
 }
 async fn update(
@@ -90,12 +97,22 @@ async fn update(
             .as_ref()
             .is_some_and(|url| url != &current.base_url);
     let mut tracker = s.cache_priority.lock().await;
-    let updated = account_dao::update(&s.pool, current, p).await?;
+    let updated = account_service::update(&s.pool, current, p).await?;
     if reset_cache {
         tracker.remove(&id);
     }
     Ok(Json(
         serde_json::to_value(account_dao::to_view(updated)).unwrap(),
+    ))
+}
+async fn set_super_priority(
+    State(s): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<AccountSuperPriorityRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let account = account_service::set_super_priority(&s.pool, &id, payload.enabled).await?;
+    Ok(Json(
+        serde_json::to_value(account_dao::to_view(account)).unwrap(),
     ))
 }
 async fn remove(

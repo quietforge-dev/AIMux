@@ -23,13 +23,53 @@
         </el-col>
         <el-col :span="12">
           <el-form-item label="类型" prop="type" required>
-            <el-select v-model="form.type" style="width: 100%">
+            <el-select
+              :model-value="form.type"
+              style="width: 100%"
+              :disabled="discoveringModels || changingScope"
+              @change="changeType"
+            >
               <el-option label="OpenAI" value="openai" />
               <el-option label="Anthropic" value="anthropic" />
             </el-select>
           </el-form-item>
         </el-col>
       </el-row>
+
+      <el-row :gutter="16">
+        <el-col :span="12">
+          <el-form-item label="供应商" prop="provider">
+            <el-select
+              :model-value="form.provider"
+              clearable
+              filterable
+              placeholder="请选择供应商"
+              style="width: 100%"
+              :disabled="discoveringModels || changingScope"
+              @change="changeProvider"
+            >
+              <template #label="{ value }"><ProviderLabel :provider="String(value)" /></template>
+              <el-option
+                v-for="provider in availableProviders"
+                :key="provider"
+                :value="provider"
+                :label="providerMeta(provider)?.label ?? provider"
+              >
+                <ProviderLabel :provider="provider" />
+              </el-option>
+            </el-select>
+          </el-form-item>
+        </el-col>
+        <el-col :span="12">
+          <el-form-item label="超级优先">
+            <el-switch v-model="form.super_priority" :disabled="!form.provider" />
+            <span class="scope-hint">优先级 ≥ 5 生效</span>
+          </el-form-item>
+        </el-col>
+      </el-row>
+      <div v-if="form.super_priority" class="scope-hint scope-description">
+        保存后替换同协议、同供应商的超级优先账号；优先级低于 5 时回到普通调度。
+      </div>
 
       <el-form-item label="上游地址" prop="base_url" required>
         <el-input v-model="form.base_url" placeholder="https://api.openai.com/v1" />
@@ -86,10 +126,13 @@
           </div>
           <el-checkbox-group v-model="form.supported_models" class="model-checkbox-group">
             <el-checkbox v-for="model in availableModels" :key="model.id" :label="model.name">
-              {{ model.name }}
+              {{ model.name
+              }}<span v-if="model.scopeHint" class="scope-hint">（{{ model.scopeHint }}）</span>
             </el-checkbox>
           </el-checkbox-group>
-          <span v-if="!availableModels.length" class="muted">该协议暂无模型目录</span>
+          <span v-if="!availableModels.length" class="muted"
+            >该协议及供应商暂无模型目录，请先到模型维护添加，或从接口获取模型。</span
+          >
         </div>
       </el-form-item>
 
@@ -255,15 +298,19 @@
 
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue';
-import { ElMessage, type FormInstance, type FormRules } from 'element-plus';
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import { Connection, Plus, Search } from '@element-plus/icons-vue';
 import { accountsApi, type Account } from '../../api/accounts';
 import type { CatalogModel } from '../../api/models';
+import ProviderLabel from '../models/ProviderLabel.vue';
+import { providerMeta } from '../../constants/providers';
 
 type AccountForm = {
   id?: string;
   name: string;
   type: Account['type'];
+  provider: string;
+  super_priority: boolean;
   base_url: string;
   api_key: string;
   priority: number;
@@ -284,7 +331,9 @@ type AccountPayload = AccountForm & {
   model_mappings: Record<string, string>;
 };
 
-type AccountModelOption = Pick<CatalogModel, 'id' | 'name' | 'type' | 'is_default'>;
+type AccountModelOption = Pick<CatalogModel, 'id' | 'name' | 'type' | 'is_default'> & {
+  scopeHint?: string;
+};
 
 const props = defineProps<{
   account?: Account;
@@ -307,6 +356,8 @@ const discoverySelection = ref<string[]>([]);
 const createForm = (): AccountForm => ({
   name: '',
   type: 'openai',
+  provider: 'openai',
+  super_priority: false,
   base_url: '',
   api_key: '',
   priority: 5,
@@ -319,8 +370,18 @@ const createForm = (): AccountForm => ({
 
 const form = reactive<AccountForm>(createForm());
 const editing = computed(() => Boolean(props.account?.id));
+const changingScope = ref(false);
+const availableProviders = computed(() => [
+  ...new Set([
+    ...props.models.filter((model) => model.type === form.type).map((model) => model.provider),
+    form.type,
+    ...(form.provider ? [form.provider] : []),
+  ]),
+]);
 const availableModels = computed(() => {
-  const models: AccountModelOption[] = props.models.filter((model) => model.type === form.type);
+  const models: AccountModelOption[] = props.models.filter(
+    (model) => model.type === form.type && (!form.provider || model.provider === form.provider),
+  );
   const known = new Set(models.map((model) => model.name));
   for (const name of form.supported_models) {
     if (!known.has(name)) {
@@ -329,11 +390,54 @@ const availableModels = computed(() => {
         name,
         type: form.type,
         is_default: 0,
+        scopeHint: props.models.some((model) => model.type === form.type && model.name === name)
+          ? '已选，供应商不匹配'
+          : '自定义/未收录',
       });
     }
   }
   return models;
 });
+
+const changeScope = async (type: Account['type'], provider: string) => {
+  changingScope.value = true;
+  try {
+    const removed = form.supported_models.filter((name) => {
+      const sameType = props.models.find((model) => model.type === type && model.name === name);
+      if (sameType) return Boolean(provider && sameType.provider !== provider);
+      return type !== form.type && props.models.some((model) => model.name === name);
+    });
+    if (removed.length) {
+      await ElMessageBox.confirm(
+        `切换后将移除 ${removed.length} 个不匹配的已选模型，并清理对应测试模型及映射。自定义模型会保留。`,
+        '切换账号模型范围',
+        { type: 'warning' },
+      );
+    }
+    form.type = type;
+    form.provider = provider;
+    if (!provider) form.super_priority = false;
+    form.supported_models = form.supported_models.filter((name) => !removed.includes(name));
+    mappingRows.value = mappingRows.value.filter(
+      (row) => !row.client_model || form.supported_models.includes(row.client_model),
+    );
+    if (!form.supported_models.includes(form.test_default_model)) form.test_default_model = '';
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(String(error));
+  } finally {
+    changingScope.value = false;
+  }
+};
+const changeType = (type: Account['type']) => {
+  const providers = props.models
+    .filter((model) => model.type === type)
+    .map((model) => model.provider);
+  return changeScope(
+    type,
+    providers.includes(form.provider as CatalogModel['provider']) ? form.provider : type,
+  );
+};
+const changeProvider = (provider: string) => changeScope(form.type, provider);
 const selectedModelCount = computed(
   () => availableModels.value.filter((model) => form.supported_models.includes(model.name)).length,
 );
@@ -391,7 +495,14 @@ const openModelDiscovery = async () => {
       base_url: form.base_url.trim(),
       api_key: form.api_key.trim(),
     });
-    discoveredModels.value = result.models;
+    discoveredModels.value = result.models.filter((name) => {
+      const catalogModel = props.models.find(
+        (model) => model.type === form.type && model.name === name,
+      );
+      return !catalogModel || !form.provider || catalogModel.provider === form.provider;
+    });
+    const excluded = result.models.length - discoveredModels.value.length;
+    if (excluded) ElMessage.info(`已按供应商过滤 ${excluded} 个其他供应商模型；未收录模型仍可选择`);
     discoverySelection.value = [...form.supported_models];
     modelDiscoveryKeyword.value = '';
     modelDiscoveryDialog.value = true;
@@ -444,6 +555,13 @@ const applyDiscoveredModels = () => {
 const rules: FormRules = {
   name: [{ required: true, message: '请输入名称', trigger: 'blur' }],
   type: [{ required: true, message: '请选择类型', trigger: 'change' }],
+  provider: [
+    {
+      validator: (_rule, value, callback) =>
+        value || editing.value ? callback() : callback(new Error('请选择供应商')),
+      trigger: 'change',
+    },
+  ],
   base_url: [{ required: true, message: '请输入上游地址', trigger: 'blur' }],
   api_key: [{ required: true, message: '请输入 API 密钥', trigger: 'blur' }],
   priority: [{ required: true, type: 'number', message: '请输入优先级', trigger: 'change' }],
@@ -471,6 +589,8 @@ const reset = async () => {
           id: row.id,
           name: row.name,
           type: row.type,
+          provider: row.provider ?? '',
+          super_priority: row.super_priority ?? false,
           base_url: row.base_url,
           api_key: row.api_key,
           priority: row.priority,
@@ -544,15 +664,6 @@ watch(
 );
 
 watch(
-  () => form.type,
-  () => {
-    const available = new Set(availableModels.value.map((model) => model.name));
-    form.supported_models = form.supported_models.filter((name) => available.has(name));
-    if (!form.supported_models.includes(form.test_default_model)) form.test_default_model = '';
-  },
-);
-
-watch(
   () => [...form.supported_models],
   (selected) => {
     if (!selected.includes(form.test_default_model)) form.test_default_model = '';
@@ -564,6 +675,14 @@ watch(
 </script>
 
 <style scoped lang="scss">
+.scope-hint {
+  color: #909399;
+  font-size: 12px;
+  margin-left: 8px;
+}
+.scope-description {
+  margin: 0 0 14px 100px;
+}
 .account-dialog :deep(.el-dialog__body) {
   max-height: calc(100vh - 140px);
   overflow-y: auto;

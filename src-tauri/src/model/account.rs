@@ -6,6 +6,8 @@ pub struct Account {
     pub id: String,
     pub name: String,
     pub r#type: String,
+    pub provider: Option<String>,
+    pub super_priority: bool,
     pub base_url: String,
     pub api_key_encrypted: String,
     pub status: String,

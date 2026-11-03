@@ -50,6 +50,29 @@ pub async fn default_name(pool: &SqlitePool, kind: &str) -> Result<Option<String
     )
 }
 
+pub async fn provider_for_model(
+    pool: &SqlitePool,
+    kind: &str,
+    name: &str,
+) -> Result<Option<String>, AppError> {
+    Ok(
+        sqlx::query_scalar("SELECT provider FROM models WHERE type=? AND name=?")
+            .bind(kind)
+            .bind(name)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+pub async fn provider_exists(pool: &SqlitePool, provider: &str) -> Result<bool, AppError> {
+    Ok(
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM models WHERE provider=?)")
+            .bind(provider)
+            .fetch_one(pool)
+            .await?,
+    )
+}
+
 pub async fn insert_missing(
     pool: &SqlitePool,
     defaults: &[(&str, &str, &str)],

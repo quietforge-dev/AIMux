@@ -1,8 +1,65 @@
 use crate::{
-    config::Settings, dao::account_dao, error::AppError, model::account::Account,
-    schema::account_schema::AccountView,
+    config::Settings,
+    dao::account_dao,
+    dao::model_dao,
+    error::AppError,
+    model::account::Account,
+    schema::account_schema::{AccountCreate, AccountUpdate, AccountView},
 };
 use sqlx::SqlitePool;
+
+async fn validate_provider(pool: &SqlitePool, provider: Option<&str>) -> Result<(), AppError> {
+    let Some(provider) = provider.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+    if [
+        "openai",
+        "anthropic",
+        "xai",
+        "google",
+        "deepseek",
+        "moonshot",
+        "alibaba",
+        "zhipu",
+        "stepfun",
+    ]
+    .contains(&provider)
+    {
+        return Ok(());
+    }
+    if !model_dao::provider_exists(pool, provider).await? {
+        return Err(AppError::BadRequest("供应商不在模型目录中".into()));
+    }
+    Ok(())
+}
+
+pub async fn create(pool: &SqlitePool, payload: AccountCreate) -> Result<Account, AppError> {
+    validate_provider(pool, payload.provider.as_deref()).await?;
+    account_dao::create(pool, payload).await
+}
+
+pub async fn update(
+    pool: &SqlitePool,
+    current: Account,
+    payload: AccountUpdate,
+) -> Result<Account, AppError> {
+    if payload
+        .provider
+        .as_ref()
+        .is_some_and(|value| Some(value.as_str()) != current.provider.as_deref())
+    {
+        validate_provider(pool, payload.provider.as_deref()).await?;
+    }
+    account_dao::update(pool, current, payload).await
+}
+
+pub async fn set_super_priority(
+    pool: &SqlitePool,
+    id: &str,
+    enabled: bool,
+) -> Result<Account, AppError> {
+    account_dao::set_super_priority(pool, id, enabled).await
+}
 
 pub async fn to_view(pool: &SqlitePool, id: &str) -> Result<AccountView, AppError> {
     account_dao::get(pool, id)

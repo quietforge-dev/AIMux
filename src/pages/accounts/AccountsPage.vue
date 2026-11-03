@@ -87,6 +87,39 @@
           </el-button>
         </template>
       </el-table-column>
+      <el-table-column column-key="provider" label="供应商" :width="columnWidth('provider', 140)">
+        <template #default="{ row }">
+          <ProviderLabel v-if="row.provider" :provider="row.provider" />
+          <span v-else class="muted">未指定</span>
+        </template>
+      </el-table-column>
+      <el-table-column
+        column-key="superPriority"
+        label="超级优先"
+        :width="columnWidth('superPriority', 130)"
+      >
+        <template #default="{ row }">
+          <el-tooltip :content="superPriorityHint(row)">
+            <span>
+              <el-switch
+                :model-value="Boolean(row.super_priority)"
+                :disabled="!row.provider || superPriorityBusy"
+                :loading="superPrioritySavingId === row.id"
+                :aria-label="`${row.name} 超级优先`"
+                @change="
+                  (value: string | number | boolean) => changeSuperPriority(row, Boolean(value))
+                "
+              />
+            </span>
+          </el-tooltip>
+          <el-tag
+            v-if="row.super_priority && (row.priority < 5 || row.status !== 'active')"
+            type="info"
+            size="small"
+            >暂未生效</el-tag
+          >
+        </template>
+      </el-table-column>
       <el-table-column
         column-key="priority"
         prop="priority"
@@ -212,6 +245,7 @@ import { useModelsStore } from '../../stores/models';
 import AccountFormDialog from '../../components/accounts/AccountFormDialog.vue';
 import AccountTestDialog from '../../components/accounts/AccountTestDialog.vue';
 import ProviderLogo from '../../components/models/ProviderLogo.vue';
+import ProviderLabel from '../../components/models/ProviderLabel.vue';
 import { useTableColumnWidths } from '../../composables/useTableColumnWidths';
 
 const { tableKey, hasCustomWidths, columnWidth, handleColumnResize, resetColumnWidths } =
@@ -231,6 +265,36 @@ const disableDialog = ref(false);
 const disableDuration = ref<'permanent' | '1' | '3' | '12'>('permanent');
 const statusSaving = ref(false);
 const disablingAccount = ref<Account>();
+const superPriorityBusy = ref(false);
+const superPrioritySavingId = ref<string>();
+const superPriorityHint = (row: Account) => {
+  if (!row.provider) return '请先编辑账号并指定供应商';
+  if (row.super_priority && row.status !== 'active') return '账号已禁用，超级优先暂未生效';
+  if (row.super_priority && row.priority < 5) return '优先级低于 5，恢复到 5 后自动生效';
+  return '同协议、同供应商仅保留一个；账号启用且优先级 ≥ 5 时优先调度匹配模型';
+};
+const changeSuperPriority = async (row: Account, enabled: boolean) => {
+  if (superPriorityBusy.value) return;
+  superPriorityBusy.value = true;
+  try {
+    if (enabled) {
+      await ElMessageBox.confirm(
+        `将 ${row.name} 设为超级优先，会替换同协议、同供应商的原选择。优先级至少为 5 时生效。`,
+        '超级优先',
+        { type: 'warning' },
+      );
+    }
+    superPrioritySavingId.value = row.id;
+    await accountsApi.setSuperPriority(row.id, enabled);
+    await load();
+    ElMessage.success(enabled ? '超级优先已开启' : '超级优先已关闭');
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(String(error));
+  } finally {
+    superPrioritySavingId.value = undefined;
+    superPriorityBusy.value = false;
+  }
+};
 const modelProviders = computed(
   () =>
     new Map<string, string>(
@@ -263,6 +327,7 @@ type AccountTransfer = {
   version: 1;
   name: string;
   type: Account['type'];
+  provider?: string | null;
   base_url: string;
   api_key: string;
   priority: number;
@@ -279,6 +344,7 @@ const toTransfer = (row: Account): AccountTransfer => ({
   version: 1,
   name: row.name,
   type: row.type,
+  provider: row.provider ?? null,
   base_url: row.base_url,
   api_key: row.api_key,
   priority: row.priority,
@@ -321,6 +387,8 @@ const parseTransfer = (raw: string): AccountTransfer => {
   const name = requiredString(value.name, 'name');
   const baseUrl = requiredString(value.base_url, 'base_url');
   const apiKey = requiredString(value.api_key, 'api_key');
+  if (value.provider != null && typeof value.provider !== 'string')
+    throw new Error('provider 必须是字符串');
   if (
     typeof value.priority !== 'number' ||
     !Number.isInteger(value.priority) ||
@@ -362,6 +430,7 @@ const parseTransfer = (raw: string): AccountTransfer => {
     version: 1,
     name,
     type,
+    provider: typeof value.provider === 'string' ? value.provider.trim() : null,
     base_url: baseUrl,
     api_key: apiKey,
     priority: value.priority,
@@ -387,6 +456,8 @@ const importFromJson = async () => {
       id: '',
       name: transfer.name,
       type: transfer.type,
+      provider: transfer.provider,
+      super_priority: false,
       base_url: transfer.base_url,
       api_key: transfer.api_key,
       status: 'active',
@@ -409,7 +480,7 @@ const importFromJson = async () => {
 
 const copy = async (row: Account) => {
   if (!models.items.length) await models.load();
-  editingAccount.value = { ...row, id: '' };
+  editingAccount.value = { ...row, id: '', super_priority: false };
   dialog.value = true;
 };
 

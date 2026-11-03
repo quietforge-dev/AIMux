@@ -5,6 +5,9 @@ pub struct AccountCreate {
     pub name: String,
     #[serde(rename = "type")]
     pub account_type: String,
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub super_priority: bool,
     pub base_url: String,
     pub api_key: String,
     #[serde(default = "default_status")]
@@ -34,6 +37,9 @@ pub struct AccountUpdate {
     pub name: Option<String>,
     #[serde(rename = "type")]
     pub account_type: Option<String>,
+    /// Missing preserves the current value; an empty string clears the provider.
+    pub provider: Option<String>,
+    pub super_priority: Option<bool>,
     pub base_url: Option<String>,
     pub api_key: Option<String>,
     pub status: Option<String>,
@@ -52,6 +58,8 @@ pub struct AccountView {
     pub name: String,
     #[serde(rename = "type")]
     pub account_type: String,
+    pub provider: Option<String>,
+    pub super_priority: bool,
     pub base_url: String,
     pub api_key: String,
     pub status: String,
@@ -79,6 +87,11 @@ pub struct AccountView {
 pub struct AccountStatusRequest {
     pub status: String,
     pub duration_hours: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AccountSuperPriorityRequest {
+    pub enabled: bool,
 }
 
 #[derive(Debug, Deserialize, Default)]

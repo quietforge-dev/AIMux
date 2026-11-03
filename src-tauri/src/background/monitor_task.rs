@@ -522,7 +522,7 @@ async fn rebalance(
         else {
             continue;
         };
-        let current = account_dao::pick_one(pool, Some(&model), &account_type).await?;
+        let current = account_dao::pick_one_normal(pool, Some(&model), &account_type).await?;
         if let Some(current) = current {
             if current.id != candidate.id
                 && should_promote(
