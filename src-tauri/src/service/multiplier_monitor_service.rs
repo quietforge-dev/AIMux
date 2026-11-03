@@ -2,7 +2,7 @@ use std::{str::FromStr, time::Duration};
 
 use chrono::{Duration as ChronoDuration, Utc};
 use futures_util::{stream, StreamExt};
-use rust_decimal::{prelude::ToPrimitive, Decimal};
+use rust_decimal::{prelude::ToPrimitive, Decimal, RoundingStrategy};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -329,11 +329,12 @@ fn parse_rate(remote: &RemoteMultiplier, divisor: i64) -> Result<f64, String> {
         .rate_multiplier
         .as_deref()
         .ok_or_else(|| "上游未返回有效倍率".to_owned())?;
-    let value = Decimal::from_str(raw).map_err(|_| "上游倍率不是有效数字".to_owned())?
-        / Decimal::from(divisor);
-    if value < Decimal::new(1, 2) || value > Decimal::new(99, 2) || value.scale() > 2 {
+    let value = (Decimal::from_str(raw).map_err(|_| "上游倍率不是有效数字".to_owned())?
+        / Decimal::from(divisor))
+    .round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero);
+    if value < Decimal::new(1, 2) || value > Decimal::new(99, 2) {
         return Err(format!(
-            "倍率除以 {divisor} 后必须在 0.01～0.99 且最多两位小数"
+            "倍率除以 {divisor} 并四舍五入保留两位小数后必须在 0.01～0.99"
         ));
     }
     value.to_f64().ok_or_else(|| "上游倍率无法转换".to_owned())
@@ -411,4 +412,49 @@ fn validate(
 
 fn due_time(now: chrono::DateTime<Utc>) -> String {
     utc_datetime_string(now - ChronoDuration::hours(SCHEDULE_INTERVAL_HOURS))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn remote(rate: &str) -> RemoteMultiplier {
+        RemoteMultiplier {
+            key: "test-key".into(),
+            rate_multiplier: Some(rate.into()),
+            rate_error: None,
+        }
+    }
+
+    #[test]
+    fn rounds_remote_rate_after_division_before_comparison() {
+        for (raw, divisor, expected) in [
+            ("0.0149", 1, 0.01),
+            ("0.015", 1, 0.02),
+            ("0.025", 1, 0.03),
+            ("1.249", 10, 0.12),
+            ("1.25", 10, 0.13),
+            ("0.1000", 1, 0.10),
+        ] {
+            let actual = parse_rate(&remote(raw), divisor).unwrap();
+            assert_eq!(actual, expected, "raw={raw}, divisor={divisor}");
+            // The existing comparison must not trigger an update for extra upstream digits.
+            assert!((actual - expected).abs() < 0.000001);
+        }
+    }
+
+    #[test]
+    fn validates_range_after_rounding_and_keeps_invalid_rates_rejected() {
+        assert_eq!(parse_rate(&remote("0.005"), 1).unwrap(), 0.01);
+        assert_eq!(parse_rate(&remote("0.994"), 1).unwrap(), 0.99);
+        for raw in ["0.0049", "0.995", "-0.01", "0", "1", "invalid"] {
+            assert!(parse_rate(&remote(raw), 1).is_err(), "raw={raw}");
+        }
+        let mut invalid = remote("0.1");
+        invalid.rate_error = Some("上游倍率无效".into());
+        assert_eq!(parse_rate(&invalid, 1).unwrap_err(), "上游倍率无效");
+        invalid.rate_error = None;
+        invalid.rate_multiplier = None;
+        assert!(parse_rate(&invalid, 1).is_err());
+    }
 }
