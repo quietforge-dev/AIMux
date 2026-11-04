@@ -3,11 +3,11 @@
     <el-aside width="214px" class="sidebar">
       <div class="brand"><span class="brand-mark">A</span><span>AIMux</span></div>
       <el-menu :default-active="route.path" router class="nav">
-        <el-menu-item index="/accounts"
-          ><el-icon><User /></el-icon>账号管理</el-menu-item
-        >
         <el-menu-item index="/models"
           ><el-icon><Grid /></el-icon>模型维护</el-menu-item
+        >
+        <el-menu-item index="/accounts"
+          ><el-icon><User /></el-icon>账号管理</el-menu-item
         >
         <el-menu-item index="/usage"
           ><el-icon><Tickets /></el-icon>使用记录</el-menu-item

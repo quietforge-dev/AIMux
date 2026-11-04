@@ -113,6 +113,23 @@
         :width="columnWidth('priority', 70)"
       />
       <el-table-column
+        column-key="superPriority"
+        label="超级优先"
+        :width="columnWidth('superPriority', 130)"
+      >
+        <template #default="{ row }">
+          <AccountSuperPrioritySwitch
+            :account-id="row.account_id"
+            :account-name="row.account_name"
+            :provider="row.provider"
+            :enabled="Boolean(row.super_priority)"
+            :priority="row.priority"
+            :status="row.account_status"
+            :refresh="refreshSuperPriority"
+          />
+        </template>
+      </el-table-column>
+      <el-table-column
         column-key="testModel"
         label="测试模型"
         :width="columnWidth('testModel')"
@@ -209,6 +226,7 @@ import { monitorApi, type MonitorItem, type MonitorRecord } from '../../api/moni
 import { settingsApi } from '../../api/settings';
 import { useModelsStore } from '../../stores/models';
 import ProviderLogo from '../../components/models/ProviderLogo.vue';
+import AccountSuperPrioritySwitch from '../../components/accounts/AccountSuperPrioritySwitch.vue';
 import { ElMessage } from 'element-plus';
 import { useTableColumnWidths } from '../../composables/useTableColumnWidths';
 import { formatThroughputValue } from '../../utils/token';
@@ -252,23 +270,35 @@ let timer: number | undefined;
 let clockTimer: number | undefined;
 const nowTick = ref(Date.now());
 
-const load = async () => {
-  if (loading.value || savingConfig.value) return;
+let pendingLoad: Promise<void> | undefined;
+const load = (): Promise<void> => {
+  if (pendingLoad) return pendingLoad;
+  if (savingConfig.value) return Promise.resolve();
   loading.value = true;
-  try {
-    const [result] = await Promise.all([monitorApi.list(), models.load()]);
-    items.value = result.items;
-    enabled.value = result.monitoring_enabled;
-    timeRange.value = toRange(result.monitoring_start_time, result.monitoring_end_time);
-    monitoringWeekdays.value = result.monitoring_weekdays?.length
-      ? [...result.monitoring_weekdays]
-      : [1, 2, 3, 4, 5, 6, 7];
-    intervalMinutes.value = result.monitoring_interval_minutes;
-    recentCount.value = result.monitoring_recent_count;
-    displayCount.value = result.monitoring_recent_count;
-  } finally {
-    loading.value = false;
-  }
+  pendingLoad = (async () => {
+    try {
+      const [result] = await Promise.all([monitorApi.list(), models.load()]);
+      items.value = result.items;
+      enabled.value = result.monitoring_enabled;
+      timeRange.value = toRange(result.monitoring_start_time, result.monitoring_end_time);
+      monitoringWeekdays.value = result.monitoring_weekdays?.length
+        ? [...result.monitoring_weekdays]
+        : [1, 2, 3, 4, 5, 6, 7];
+      intervalMinutes.value = result.monitoring_interval_minutes;
+      recentCount.value = result.monitoring_recent_count;
+      displayCount.value = result.monitoring_recent_count;
+    } finally {
+      loading.value = false;
+      pendingLoad = undefined;
+    }
+  })();
+  return pendingLoad;
+};
+
+const refreshSuperPriority = async () => {
+  // A request started before the toggle may still return the old account flags.
+  await pendingLoad?.catch(() => undefined);
+  await load();
 };
 
 const persistShowCheckDuration = (value: string | number | boolean) => {

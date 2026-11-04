@@ -12,6 +12,9 @@ export type MonitorItem = {
   account_id: string;
   account_name: string;
   account_type: string;
+  provider: string | null;
+  super_priority: boolean;
+  account_status: string;
   multiplier: number;
   priority: number;
   monitor_average_duration_ms?: number;
