@@ -1,11 +1,11 @@
 use crate::{
-    app_state::AppState,
+    app_state::{AppState, ServerState},
     dao::{account_dao, monitor_dao},
     error::AppError,
     service::monitor_service,
 };
 use axum::{
-    extract::{Query, State},
+    extract::{Extension, Query},
     routing::get,
     Json, Router,
 };
@@ -15,11 +15,11 @@ use std::{collections::HashMap, sync::Arc};
 struct Q {
     limit: Option<i64>,
 }
-pub fn routes() -> Router<Arc<AppState>> {
+pub fn routes() -> Router<Arc<ServerState>> {
     Router::new().route("/api/monitor/records", get(records))
 }
 async fn records(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Query(q): Query<Q>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let (accounts, _) = account_dao::list(&s.pool, 0, 10000, None, Some("active"), None).await?;

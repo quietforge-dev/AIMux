@@ -1,5 +1,5 @@
 use crate::{
-    app_state::AppState,
+    app_state::{AppState, ServerState},
     dao::account_dao,
     error::AppError,
     schema::account_schema::{
@@ -10,7 +10,7 @@ use crate::{
     upstream::error::response_body,
 };
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -28,7 +28,7 @@ pub struct AccountQuery {
     pub status: Option<String>,
     pub name: Option<String>,
 }
-pub fn routes() -> Router<Arc<AppState>> {
+pub fn routes() -> Router<Arc<ServerState>> {
     Router::new()
         .route("/api/accounts", get(list).post(create))
         .route(
@@ -46,7 +46,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/api/accounts/discover-models", post(discover_models))
 }
 async fn list(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Query(q): Query<AccountQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let (items, total) = account_dao::list(
@@ -63,7 +63,7 @@ async fn list(
     ))
 }
 async fn get_one(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     Ok(Json(
@@ -71,7 +71,7 @@ async fn get_one(
     ))
 }
 async fn create(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Json(p): Json<AccountCreate>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     Ok(Json(
@@ -82,7 +82,7 @@ async fn create(
     ))
 }
 async fn update(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Path(id): Path<String>,
     Json(p): Json<AccountUpdate>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -106,7 +106,7 @@ async fn update(
     ))
 }
 async fn set_super_priority(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Path(id): Path<String>,
     Json(payload): Json<AccountSuperPriorityRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -116,7 +116,7 @@ async fn set_super_priority(
     ))
 }
 async fn remove(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     let mut tracker = s.cache_priority.lock().await;
@@ -125,7 +125,7 @@ async fn remove(
     Ok(StatusCode::NO_CONTENT)
 }
 async fn discover_models(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Json(p): Json<DiscoverModelsRequest>,
 ) -> Result<Json<DiscoverModelsResponse>, AppError> {
     let settings = s.settings.read().await.clone();
@@ -139,7 +139,7 @@ async fn discover_models(
     Ok(Json(DiscoverModelsResponse { models }))
 }
 async fn toggle(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let a = account_dao::toggle_status(&s.pool, &id)
@@ -148,7 +148,7 @@ async fn toggle(
     Ok(Json(serde_json::to_value(account_dao::to_view(a)).unwrap()))
 }
 async fn set_status(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Path(id): Path<String>,
     Json(p): Json<AccountStatusRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -160,7 +160,7 @@ async fn set_status(
     ))
 }
 async fn adjust(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Path(id): Path<String>,
     Query(q): Query<AdjustQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -174,7 +174,7 @@ struct AdjustQuery {
     priority: Option<i64>,
 }
 async fn test(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Path(id): Path<String>,
     Json(p): Json<TestRequest>,
 ) -> Result<impl IntoResponse, AppError> {

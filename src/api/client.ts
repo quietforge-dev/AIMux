@@ -10,8 +10,15 @@ const readAuthToken = (): string | undefined => {
 };
 
 let authToken = readAuthToken();
+let desktopToken: string | undefined;
+let authEpoch = 0;
+export const setDesktopToken = (value: string) => {
+  desktopToken = value;
+  authEpoch++;
+};
 
 export const setAuthToken = (value: string) => {
+  authEpoch++;
   authToken = value.trim() || undefined;
   try {
     if (authToken) window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, authToken);
@@ -33,11 +40,14 @@ export const setApiBase = (value: string) => {
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set('Content-Type', 'application/json');
-  if (authToken) headers.set('Authorization', `Bearer ${authToken}`);
+  const epoch = authEpoch;
+  const token = desktopToken || authToken;
+  if (token) headers.set('Authorization', `Bearer ${token}`);
   const response = await fetch(`${base}${path}`, {
-    headers,
     ...init,
+    headers,
   });
+  if (epoch !== authEpoch) throw new Error('登录用户已变化，请重新操作');
   if (response.status === 401 && path !== '/api/auth/login') {
     clearAuthToken();
     window.dispatchEvent(new CustomEvent('aimux-auth-required'));
@@ -47,7 +57,9 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     throw new Error(detail || `${response.status} ${response.statusText}`);
   }
   if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  const value = (await response.json()) as T;
+  if (epoch !== authEpoch) throw new Error('登录用户已变化，请重新操作');
+  return value;
 }
 export const get = <T>(path: string) => request<T>(path);
 export const post = <T>(path: string, body?: unknown, init: RequestInit = {}) =>

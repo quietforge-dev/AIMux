@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::app_state::AppState;
+use crate::app_state::ServerState;
 
 const GITHUB_REPOSITORY_URL: &str = "https://github.com/quietforge-dev/AIMux";
 
@@ -51,14 +51,14 @@ pub fn open_external_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn app_version(_state: State<'_, std::sync::Arc<AppState>>) -> String {
+pub fn app_version(_state: State<'_, std::sync::Arc<ServerState>>) -> String {
     env!("CARGO_PKG_VERSION").to_owned()
 }
 
 #[tauri::command]
-pub async fn gateway_url(state: State<'_, std::sync::Arc<AppState>>) -> Result<String, String> {
+pub async fn gateway_url(state: State<'_, std::sync::Arc<ServerState>>) -> Result<String, String> {
     let app_state = state.inner().clone();
-    let settings = app_state.settings.read().await;
+    let settings = &app_state.runtime_settings;
     let host = match settings.host.trim() {
         "" | "0.0.0.0" | "::" => "127.0.0.1",
         value => value,
@@ -80,4 +80,18 @@ pub fn minimize_to_tray(window: tauri::WebviewWindow) -> Result<(), String> {
 #[tauri::command]
 pub fn exit_app(app: tauri::AppHandle) {
     app.exit(0);
+}
+
+#[tauri::command]
+pub async fn desktop_token(
+    state: State<'_, std::sync::Arc<ServerState>>,
+) -> Result<String, String> {
+    let owner = crate::dao::user_dao::get(&state.pool, "local")
+        .await
+        .map_err(|e| e.to_string())?;
+    let runtime = state.user_state(&owner).await.map_err(|e| e.to_string())?;
+    runtime
+        .desktop_secret
+        .clone()
+        .ok_or_else(|| "非桌面运行模式".to_owned())
 }

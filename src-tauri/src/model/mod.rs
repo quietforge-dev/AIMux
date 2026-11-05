@@ -4,3 +4,5 @@ pub mod monitor_record;
 pub mod multiplier_monitor;
 pub mod setting;
 pub mod usage_record;
+
+pub mod user;

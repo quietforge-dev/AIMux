@@ -1,11 +1,11 @@
 use crate::{
-    app_state::AppState,
+    app_state::{AppState, ServerState},
     dao::model_dao,
     error::AppError,
     schema::model_schema::{ModelCreate, ModelUpdate},
 };
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query},
     http::StatusCode,
     routing::{get, post, put},
     Json, Router,
@@ -18,14 +18,14 @@ struct Q {
     kind: Option<String>,
     provider: Option<String>,
 }
-pub fn routes() -> Router<Arc<AppState>> {
+pub fn routes() -> Router<Arc<ServerState>> {
     Router::new()
         .route("/api/models", get(list).post(create))
         .route("/api/models/{id}", put(update).delete(remove))
         .route("/api/models/{id}/set-default", post(default_model))
 }
 async fn list(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Query(q): Query<Q>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     Ok(Json(
@@ -33,7 +33,7 @@ async fn list(
     ))
 }
 async fn create(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Json(p): Json<ModelCreate>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     Ok(Json(
@@ -41,7 +41,7 @@ async fn create(
     ))
 }
 async fn update(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Path(id): Path<String>,
     Json(p): Json<ModelUpdate>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -53,14 +53,14 @@ async fn update(
     ))
 }
 async fn remove(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     model_dao::delete(&s.pool, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 async fn default_model(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let m = model_dao::get(&s.pool, &id)

@@ -1,70 +1,72 @@
+use crate::database::UserDb;
 use crate::error::AppError;
-use sqlx::SqlitePool;
 
 pub type TokenTotals = (i64, i64, i64, i64);
 
-pub async fn first_usage_at(pool: &SqlitePool) -> Result<Option<String>, AppError> {
+pub async fn first_usage_at(pool: &UserDb) -> Result<Option<String>, AppError> {
     Ok(
-        sqlx::query_scalar("SELECT MIN(started_at) FROM usage_records")
-            .fetch_one(pool)
+        sqlx::query_scalar("SELECT MIN(started_at) FROM usage_records WHERE user_id=?1")
+            .bind(pool.user_id())
+            .fetch_one(pool.raw())
             .await?,
     )
 }
 
-pub async fn dates(pool: &SqlitePool) -> Result<Vec<String>, AppError> {
-    Ok(
-        sqlx::query_scalar("SELECT stat_date FROM daily_usage_statistics ORDER BY stat_date")
-            .fetch_all(pool)
-            .await?,
+pub async fn dates(pool: &UserDb) -> Result<Vec<String>, AppError> {
+    Ok(sqlx::query_scalar(
+        "SELECT stat_date FROM daily_usage_statistics WHERE user_id=?1 ORDER BY stat_date",
     )
+    .bind(pool.user_id())
+    .fetch_all(pool.raw())
+    .await?)
 }
 
 /// A single write statement is atomic across multiple app instances. Never overwrite
 /// an archived row using raw data that the user may already have cleaned up.
 pub async fn archive_day(
-    pool: &SqlitePool,
+    pool: &UserDb,
     date: &str,
     start: &str,
     end: &str,
     now: &str,
 ) -> Result<bool, AppError> {
     let result = sqlx::query(r#"
-        INSERT INTO daily_usage_statistics(stat_date,started_at,ended_at,input_tokens,output_tokens,cached_tokens,total_tokens,updated_at)
-        SELECT ?,?,?,COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_tokens),0),COALESCE(SUM(total_tokens),0),?
-        FROM usage_records WHERE started_at>=? AND started_at<?
-        HAVING NOT EXISTS (SELECT 1 FROM usage_records WHERE started_at>=? AND started_at<? AND stream=1 AND ended_at IS NULL)
-           AND NOT EXISTS (SELECT 1 FROM daily_usage_statistics WHERE started_at < ? AND ended_at > ?)
-        ON CONFLICT(stat_date) DO NOTHING
-    "#).bind(date).bind(start).bind(end).bind(now).bind(start).bind(end).bind(start).bind(end).bind(end).bind(start)
-        .execute(pool).await?;
+        INSERT INTO daily_usage_statistics(user_id,stat_date,started_at,ended_at,input_tokens,output_tokens,cached_tokens,total_tokens,updated_at)
+        SELECT ?1,?2,?3,?4,COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_tokens),0),COALESCE(SUM(total_tokens),0),?5
+        FROM usage_records WHERE user_id=?1 AND started_at>=?6 AND started_at<?7
+        HAVING NOT EXISTS (SELECT 1 FROM usage_records WHERE user_id=?1 AND started_at>=?8 AND started_at<?9 AND stream=1 AND ended_at IS NULL)
+           AND NOT EXISTS (SELECT 1 FROM daily_usage_statistics WHERE user_id=?1 AND started_at < ?10 AND ended_at > ?11)
+        ON CONFLICT(user_id,stat_date) DO NOTHING
+    "#).bind(pool.user_id()).bind(date).bind(start).bind(end).bind(now).bind(start).bind(end).bind(start).bind(end).bind(end).bind(start)
+        .execute(pool.raw()).await?;
     Ok(result.rows_affected() == 1)
 }
 
 /// Snapshot rows and uncovered raw records are read within one SQLite statement.
-pub async fn total(pool: &SqlitePool) -> Result<TokenTotals, AppError> {
+pub async fn total(pool: &UserDb) -> Result<TokenTotals, AppError> {
     Ok(sqlx::query_as(r#"
         WITH ordered AS (
             SELECT ended_at AS range_start,
                    LEAD(started_at, 1, '9999-12-31T23:59:59Z') OVER (ORDER BY started_at) AS range_end
-            FROM daily_usage_statistics
+            FROM daily_usage_statistics WHERE user_id=?1
         ), uncovered AS (
             SELECT '' AS range_start, COALESCE(MIN(started_at), '9999-12-31T23:59:59Z') AS range_end
-            FROM daily_usage_statistics
+            FROM daily_usage_statistics WHERE user_id=?1
             UNION ALL
             SELECT range_start, range_end FROM ordered WHERE range_start < range_end
         )
         SELECT COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_tokens),0),COALESCE(SUM(total_tokens),0)
         FROM (
-            SELECT input_tokens,output_tokens,cached_tokens,total_tokens FROM daily_usage_statistics
+            SELECT input_tokens,output_tokens,cached_tokens,total_tokens FROM daily_usage_statistics WHERE user_id=?1
             UNION ALL
             SELECT u.input_tokens,u.output_tokens,u.cached_tokens,u.total_tokens
-            FROM uncovered r JOIN usage_records u ON u.started_at>=r.range_start AND u.started_at<r.range_end
+            FROM uncovered r JOIN usage_records u ON u.user_id=?1 AND u.started_at>=r.range_start AND u.started_at<r.range_end
         )
-    "#).fetch_one(pool).await?)
+    "#).bind(pool.user_id()).fetch_one(pool.raw()).await?)
 }
 
 pub async fn day(
-    pool: &SqlitePool,
+    pool: &UserDb,
     date: &str,
     start: &str,
     end: &str,
@@ -72,12 +74,11 @@ pub async fn day(
     Ok(sqlx::query_as(r#"
         SELECT COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_tokens),0),COALESCE(SUM(total_tokens),0)
         FROM (
-            SELECT input_tokens,output_tokens,cached_tokens,total_tokens FROM daily_usage_statistics WHERE stat_date=?
+            SELECT input_tokens,output_tokens,cached_tokens,total_tokens FROM daily_usage_statistics WHERE user_id=?1 AND stat_date=?2
             UNION ALL
-            SELECT input_tokens,output_tokens,cached_tokens,total_tokens FROM usage_records
-            WHERE started_at>=? AND started_at<? AND NOT EXISTS(SELECT 1 FROM daily_usage_statistics WHERE stat_date=?)
+            SELECT input_tokens,output_tokens,cached_tokens,total_tokens FROM usage_records WHERE user_id=?1 AND started_at>=?3 AND started_at<?4 AND NOT EXISTS(SELECT 1 FROM daily_usage_statistics WHERE user_id=?1 AND stat_date=?5)
         )
-    "#).bind(date).bind(start).bind(end).bind(date).fetch_one(pool).await?)
+    "#).bind(pool.user_id()).bind(date).bind(start).bind(end).bind(date).fetch_one(pool.raw()).await?)
 }
 
 #[cfg(test)]
@@ -85,15 +86,16 @@ mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
 
-    async fn pool() -> SqlitePool {
+    async fn pool() -> UserDb {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
             .unwrap();
+        let pool = UserDb::new(pool, "local");
         // Simulate an existing installation before upgrading, preserving its raw rows.
         sqlx::raw_sql(include_str!("../../migrations/0001_baseline.sql"))
-            .execute(&pool)
+            .execute(pool.raw())
             .await
             .unwrap();
         insert(
@@ -117,15 +119,35 @@ mod tests {
             include_str!("../../migrations/0011_daily_usage_statistics.sql"),
             include_str!("../../migrations/0012_rebuild_multiplier_monitor_configs.sql"),
             include_str!("../../migrations/0013_accounts_provider_super_priority.sql"),
+            include_str!("../../migrations/0014_users_and_isolation.sql"),
         ] {
-            sqlx::raw_sql(sql).execute(&pool).await.unwrap();
+            sqlx::raw_sql(sql).execute(pool.raw()).await.unwrap();
         }
         pool
     }
 
-    async fn insert(pool: &SqlitePool, id: &str, start: &str, end: Option<&str>, input: i64) {
-        sqlx::query("INSERT INTO usage_records(id,trace_id,started_at,ended_at,stream,success,attempts,input_tokens,output_tokens,cached_tokens,total_tokens) VALUES(?,?,?, ?,1,1,1,?,10,50,?)")
-            .bind(id).bind(id).bind(start).bind(end).bind(input).bind(input+10).execute(pool).await.unwrap();
+    async fn insert(pool: &UserDb, id: &str, start: &str, end: Option<&str>, input: i64) {
+        let scoped: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('usage_records') WHERE name='user_id')",
+        )
+        .fetch_one(pool.raw())
+        .await
+        .unwrap();
+        let sql = if scoped {
+            "INSERT INTO usage_records(user_id,id,trace_id,started_at,ended_at,stream,success,attempts,input_tokens,output_tokens,cached_tokens,total_tokens) VALUES('local',?,?,?, ?,1,1,1,?,10,50,?)"
+        } else {
+            "INSERT INTO usage_records(id,trace_id,started_at,ended_at,stream,success,attempts,input_tokens,output_tokens,cached_tokens,total_tokens) VALUES(?,?,?, ?,1,1,1,?,10,50,?)"
+        };
+        sqlx::query(sql)
+            .bind(id)
+            .bind(id)
+            .bind(start)
+            .bind(end)
+            .bind(input)
+            .bind(input + 10)
+            .execute(pool.raw())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -142,7 +164,7 @@ mod tests {
             .unwrap());
         insert(&pool, "late", "2026-10-20T13:00:00Z", Some(end), 200).await;
         sqlx::query("UPDATE usage_records SET input_tokens=300,total_tokens=310 WHERE id='late'")
-            .execute(&pool)
+            .execute(pool.raw())
             .await
             .unwrap();
         insert(&pool, "today", end, Some(end), 400).await;
@@ -173,7 +195,7 @@ mod tests {
             .await
             .unwrap();
         assert!(!dates(&pool).await.unwrap().contains(&"2026-10-21".into()));
-        sqlx::query("UPDATE usage_records SET ended_at='2026-10-22T01:00:00Z',input_tokens=500,total_tokens=510 WHERE id='pending'").execute(&pool).await.unwrap();
+        sqlx::query("UPDATE usage_records SET ended_at='2026-10-22T01:00:00Z',input_tokens=500,total_tokens=510 WHERE id='pending'").execute(pool.raw()).await.unwrap();
         crate::service::daily_statistics_service::catch_up(&pool, now)
             .await
             .unwrap();
@@ -222,8 +244,9 @@ mod tests {
             .connect_with(options)
             .await
             .unwrap();
+        let legacy = UserDb::new(legacy, "local");
         sqlx::raw_sql(include_str!("../../migrations/0001_baseline.sql"))
-            .execute(&legacy)
+            .execute(legacy.raw())
             .await
             .unwrap();
         insert(
@@ -236,6 +259,7 @@ mod tests {
         .await;
         legacy.close().await;
         let upgraded = crate::database::connect(&path).await.unwrap();
+        let upgraded = UserDb::new(upgraded, "local");
         assert_eq!(total(&upgraded).await.unwrap(), (100, 10, 50, 110));
         assert!(archive_day(
             &upgraded,
@@ -248,6 +272,7 @@ mod tests {
         .unwrap());
         upgraded.close().await;
         let reopened = crate::database::connect(&path).await.unwrap();
+        let reopened = UserDb::new(reopened, "local");
         assert_eq!(total(&reopened).await.unwrap(), (100, 10, 50, 110));
         reopened.close().await;
         tokio::fs::remove_dir_all(&folder).await.unwrap();

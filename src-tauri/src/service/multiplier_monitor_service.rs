@@ -1,9 +1,9 @@
 use std::{str::FromStr, time::Duration};
 
+use crate::database::UserDb;
 use chrono::{Duration as ChronoDuration, Utc};
 use futures_util::{stream, StreamExt};
 use rust_decimal::{prelude::ToPrimitive, Decimal, RoundingStrategy};
-use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::{
@@ -23,7 +23,7 @@ const LEASE_MINUTES: i64 = 10;
 const SCHEDULE_INTERVAL_HOURS: i64 = 1;
 const QUERY_TIMEOUT: Duration = Duration::from_secs(60);
 
-pub async fn list(pool: &SqlitePool) -> Result<Vec<MultiplierMonitorConfigView>, AppError> {
+pub async fn list(pool: &UserDb) -> Result<Vec<MultiplierMonitorConfigView>, AppError> {
     let now = utc_now_string();
     multiplier_monitor_dao::list_entries(pool)
         .await?
@@ -32,10 +32,7 @@ pub async fn list(pool: &SqlitePool) -> Result<Vec<MultiplierMonitorConfigView>,
         .collect()
 }
 
-pub async fn get_view(
-    pool: &SqlitePool,
-    id: &str,
-) -> Result<MultiplierMonitorConfigView, AppError> {
+pub async fn get_view(pool: &UserDb, id: &str) -> Result<MultiplierMonitorConfigView, AppError> {
     let entry = multiplier_monitor_dao::get_entry(pool, id)
         .await?
         .ok_or_else(|| AppError::NotFound("账号不存在".into()))?;
@@ -43,7 +40,7 @@ pub async fn get_view(
 }
 
 pub async fn update(
-    pool: &SqlitePool,
+    pool: &UserDb,
     id: &str,
     payload: MultiplierMonitorUpdate,
 ) -> Result<MultiplierMonitorConfigView, AppError> {
@@ -77,7 +74,7 @@ pub async fn update(
 }
 
 async fn save(
-    pool: &SqlitePool,
+    pool: &UserDb,
     account_id: &str,
     platform: &str,
     group: Option<&str>,
@@ -103,7 +100,7 @@ async fn save(
     get_view(pool, account_id).await
 }
 
-pub async fn toggle(pool: &SqlitePool, id: &str) -> Result<MultiplierMonitorConfigView, AppError> {
+pub async fn toggle(pool: &UserDb, id: &str) -> Result<MultiplierMonitorConfigView, AppError> {
     let now = utc_now_string();
     if multiplier_monitor_dao::get_config(pool, id)
         .await?
@@ -117,7 +114,7 @@ pub async fn toggle(pool: &SqlitePool, id: &str) -> Result<MultiplierMonitorConf
 }
 
 pub async fn check_now(
-    pool: &SqlitePool,
+    pool: &UserDb,
     settings: &Settings,
     id: &str,
 ) -> Result<MultiplierMonitorCheckResult, AppError> {
@@ -128,7 +125,7 @@ pub async fn check_now(
     run_claimed(pool, settings, cfg, &owner).await
 }
 
-pub async fn run_due(pool: &SqlitePool, settings: &Settings, worker: &str) -> Result<(), AppError> {
+pub async fn run_due(pool: &UserDb, settings: &Settings, worker: &str) -> Result<(), AppError> {
     let now = Utc::now();
     let ids = multiplier_monitor_dao::list_due_ids(pool, &due_time(now), &utc_datetime_string(now))
         .await?;
@@ -152,7 +149,7 @@ pub async fn run_due(pool: &SqlitePool, settings: &Settings, worker: &str) -> Re
 }
 
 pub async fn newapi_groups(
-    pool: &SqlitePool,
+    pool: &UserDb,
     settings: &Settings,
     account_id: &str,
 ) -> Result<Vec<multiplier_query::NewApiGroup>, AppError> {
@@ -165,7 +162,7 @@ pub async fn newapi_groups(
 }
 
 async fn claim(
-    pool: &SqlitePool,
+    pool: &UserDb,
     id: &str,
     owner: &str,
     force: bool,
@@ -184,7 +181,7 @@ async fn claim(
 }
 
 async fn run_claimed(
-    pool: &SqlitePool,
+    pool: &UserDb,
     settings: &Settings,
     config: MultiplierMonitorConfig,
     owner: &str,

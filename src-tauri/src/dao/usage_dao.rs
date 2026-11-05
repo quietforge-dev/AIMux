@@ -1,8 +1,9 @@
+use crate::database::UserDb;
 use crate::{error::AppError, model::usage_record::UsageRecord};
-use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use sqlx::{QueryBuilder, Sqlite};
 
 pub async fn recent_average_throughputs(
-    pool: &SqlitePool,
+    pool: &UserDb,
     account_ids: &[String],
     limit_per_account: i64,
 ) -> Result<Vec<(String, Option<f64>)>, AppError> {
@@ -19,7 +20,7 @@ pub async fn recent_average_throughputs(
                              ELSE duration_ms END
                     ) AS throughput
                     FROM usage_records
-                    WHERE account_id = a.id
+                    WHERE user_id = a.user_id AND account_id = a.id
                       AND success = 1 AND ended_at IS NOT NULL AND ended_at <> ''
                       AND output_tokens > 0 AND duration_ms > 0
                     ORDER BY started_at DESC, id DESC
@@ -32,10 +33,11 @@ pub async fn recent_average_throughputs(
             separated.push_bind(id);
         }
         separated.push_unseparated(")");
+        query.push(" AND a.user_id=").push_bind(pool.user_id());
         rows.extend(
             query
                 .build_query_as::<(String, Option<f64>)>()
-                .fetch_all(pool)
+                .fetch_all(pool.raw())
                 .await?,
         );
     }
@@ -43,6 +45,7 @@ pub async fn recent_average_throughputs(
 }
 
 struct UsageFilter<'a> {
+    user_id: &'a str,
     account_id: Option<&'a str>,
     model: Option<&'a str>,
     kind: Option<&'a str>,
@@ -54,8 +57,8 @@ struct UsageFilter<'a> {
 
 impl<'a> UsageFilter<'a> {
     fn where_clause(&self) -> (String, Vec<String>) {
-        let mut where_sql = String::from(" WHERE 1=1");
-        let mut values = Vec::new();
+        let mut where_sql = String::from(" WHERE user_id=?");
+        let mut values = vec![self.user_id.to_owned()];
         if let Some(value) = self.account_id {
             where_sql.push_str(" AND account_id=?");
             values.push(value.into());
@@ -92,13 +95,13 @@ impl<'a> UsageFilter<'a> {
     }
 }
 
-pub async fn create(pool: &SqlitePool, r: &UsageRecord) -> Result<(), AppError> {
-    sqlx::query("INSERT INTO usage_records(id,trace_id,started_at,ended_at,duration_ms,first_token_ms,account_id,account_name,account_type,model,reasoning_effort,endpoint,stream,success,status_code,error_code,error_message,input_tokens,output_tokens,total_tokens,cached_tokens,client_ip,attempts) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(&r.id).bind(&r.trace_id).bind(&r.started_at).bind(&r.ended_at).bind(r.duration_ms).bind(r.first_token_ms).bind(&r.account_id).bind(&r.account_name).bind(&r.account_type).bind(&r.model).bind(&r.reasoning_effort).bind(&r.endpoint).bind(r.stream).bind(r.success).bind(r.status_code).bind(&r.error_code).bind(&r.error_message).bind(r.input_tokens).bind(r.output_tokens).bind(r.total_tokens).bind(r.cached_tokens).bind(&r.client_ip).bind(r.attempts).execute(pool).await?;
+pub async fn create(pool: &UserDb, r: &UsageRecord) -> Result<(), AppError> {
+    sqlx::query("INSERT INTO usage_records(user_id,id,trace_id,started_at,ended_at,duration_ms,first_token_ms,account_id,account_name,account_type,model,reasoning_effort,endpoint,stream,success,status_code,error_code,error_message,input_tokens,output_tokens,total_tokens,cached_tokens,client_ip,attempts) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24)").bind(pool.user_id()).bind(&r.id).bind(&r.trace_id).bind(&r.started_at).bind(&r.ended_at).bind(r.duration_ms).bind(r.first_token_ms).bind(&r.account_id).bind(&r.account_name).bind(&r.account_type).bind(&r.model).bind(&r.reasoning_effort).bind(&r.endpoint).bind(r.stream).bind(r.success).bind(r.status_code).bind(&r.error_code).bind(&r.error_message).bind(r.input_tokens).bind(r.output_tokens).bind(r.total_tokens).bind(r.cached_tokens).bind(&r.client_ip).bind(r.attempts).execute(pool.raw()).await?;
     Ok(())
 }
 
 pub async fn finish_stream(
-    pool: &SqlitePool,
+    pool: &UserDb,
     id: &str,
     ended_at: &str,
     duration_ms: i64,
@@ -110,7 +113,7 @@ pub async fn finish_stream(
     tokens: (Option<i64>, Option<i64>, Option<i64>, Option<i64>),
 ) -> Result<(), AppError> {
     let (input, output, total, cached) = tokens;
-    let result = sqlx::query("UPDATE usage_records SET ended_at=?,duration_ms=?,first_token_ms=?,success=?,status_code=?,error_code=?,error_message=?,input_tokens=?,output_tokens=?,total_tokens=?,cached_tokens=? WHERE id=?")
+    let result = sqlx::query("UPDATE usage_records SET ended_at=?2,duration_ms=?3,first_token_ms=?4,success=?5,status_code=?6,error_code=?7,error_message=?8,input_tokens=?9,output_tokens=?10,total_tokens=?11,cached_tokens=?12 WHERE user_id=?1 AND id=?13").bind(pool.user_id())
         .bind(ended_at)
         .bind(duration_ms)
         .bind(first_token_ms)
@@ -123,7 +126,7 @@ pub async fn finish_stream(
         .bind(total)
         .bind(cached)
         .bind(id)
-        .execute(pool)
+        .execute(pool.raw())
         .await?;
     if result.rows_affected() != 1 {
         return Err(AppError::Internal(format!(
@@ -134,7 +137,7 @@ pub async fn finish_stream(
     Ok(())
 }
 pub async fn list(
-    pool: &SqlitePool,
+    pool: &UserDb,
     offset: i64,
     limit: i64,
     account_id: Option<&str>,
@@ -146,6 +149,7 @@ pub async fn list(
     reasoning_effort: Option<&str>,
 ) -> Result<(Vec<UsageRecord>, i64), AppError> {
     let filter = UsageFilter {
+        user_id: pool.user_id(),
         account_id,
         model,
         kind,
@@ -163,24 +167,25 @@ pub async fn list(
     for value in &values {
         query = query.bind(value);
     }
-    let rows = query.bind(limit).bind(offset).fetch_all(pool).await?;
+    let rows = query.bind(limit).bind(offset).fetch_all(pool.raw()).await?;
     let cq = format!("SELECT COUNT(*) FROM usage_records{}", where_sql);
     let mut count = sqlx::query_scalar::<_, i64>(&cq);
     for value in &values {
         count = count.bind(value);
     }
-    Ok((rows, count.fetch_one(pool).await?))
+    Ok((rows, count.fetch_one(pool.raw()).await?))
 }
-pub async fn get(pool: &SqlitePool, id: &str) -> Result<Option<UsageRecord>, AppError> {
+pub async fn get(pool: &UserDb, id: &str) -> Result<Option<UsageRecord>, AppError> {
     Ok(
-        sqlx::query_as::<_, UsageRecord>("SELECT * FROM usage_records WHERE id=?")
+        sqlx::query_as::<_, UsageRecord>("SELECT * FROM usage_records WHERE user_id=?1 AND id=?2")
+            .bind(pool.user_id())
             .bind(id)
-            .fetch_optional(pool)
+            .fetch_optional(pool.raw())
             .await?,
     )
 }
 pub async fn summary(
-    pool: &SqlitePool,
+    pool: &UserDb,
     account_id: Option<&str>,
     model: Option<&str>,
     kind: Option<&str>,
@@ -190,6 +195,7 @@ pub async fn summary(
     reasoning_effort: Option<&str>,
 ) -> Result<(i64, i64, f64, i64), AppError> {
     let filter = UsageFilter {
+        user_id: pool.user_id(),
         account_id,
         model,
         kind,
@@ -207,15 +213,15 @@ pub async fn summary(
     for value in values {
         query = query.bind(value);
     }
-    Ok(query.fetch_one(pool).await?)
+    Ok(query.fetch_one(pool.raw()).await?)
 }
 pub async fn token_totals(
-    pool: &SqlitePool,
+    pool: &UserDb,
     started_after: Option<&str>,
     started_before: Option<&str>,
 ) -> Result<(i64, i64, i64, i64), AppError> {
     let mut sql = String::from(
-        "SELECT COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_tokens),0),COALESCE(SUM(total_tokens),0) FROM usage_records WHERE 1=1",
+        "SELECT COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_tokens),0),COALESCE(SUM(total_tokens),0) FROM usage_records WHERE user_id=?",
     );
     let mut values = Vec::new();
     if let Some(value) = started_after {
@@ -226,14 +232,14 @@ pub async fn token_totals(
         sql.push_str(" AND started_at < ?");
         values.push(value);
     }
-    let mut query = sqlx::query_as::<_, (i64, i64, i64, i64)>(&sql);
+    let mut query = sqlx::query_as::<_, (i64, i64, i64, i64)>(&sql).bind(pool.user_id());
     for value in values {
         query = query.bind(value);
     }
-    Ok(query.fetch_one(pool).await?)
+    Ok(query.fetch_one(pool.raw()).await?)
 }
 pub async fn token_totals_by_account(
-    pool: &SqlitePool,
+    pool: &UserDb,
     started_after: &str,
     started_before: &str,
 ) -> Result<Vec<(String, i64, i64, i64, i64)>, AppError> {
@@ -245,17 +251,18 @@ pub async fn token_totals_by_account(
                    COALESCE(SUM(cached_tokens), 0),
                    COALESCE(SUM(total_tokens), 0)
             FROM usage_records
-            WHERE started_at >= ? AND started_at < ? AND account_id IS NOT NULL
+            WHERE user_id=?1 AND started_at >= ?2 AND started_at < ?3 AND account_id IS NOT NULL
             GROUP BY account_id
         "#,
     )
+    .bind(pool.user_id())
     .bind(started_after)
     .bind(started_before)
-    .fetch_all(pool)
+    .fetch_all(pool.raw())
     .await?)
 }
 pub async fn recent_cache_rates_by_account(
-    pool: &SqlitePool,
+    pool: &UserDb,
     started_after: &str,
     started_before: &str,
     limit_per_account: i64,
@@ -271,9 +278,9 @@ pub async fn recent_cache_rates_by_account(
                            ORDER BY started_at DESC, id DESC
                        ) AS row_number
                 FROM usage_records
-                WHERE account_id IS NOT NULL
-                  AND started_at >= ?
-                  AND started_at < ?
+                WHERE user_id=?1 AND account_id IS NOT NULL
+                  AND started_at >= ?2
+                  AND started_at < ?3
                   AND input_tokens > 0
                   AND cached_tokens IS NOT NULL
             )
@@ -282,31 +289,32 @@ pub async fn recent_cache_rates_by_account(
                    COALESCE(SUM(cached_tokens), 0),
                    COUNT(*)
             FROM ranked
-            WHERE row_number <= ?
+            WHERE row_number <= ?4
             GROUP BY account_id
         "#,
     )
+    .bind(pool.user_id())
     .bind(started_after)
     .bind(started_before)
     .bind(limit_per_account)
-    .fetch_all(pool)
+    .fetch_all(pool.raw())
     .await?)
 }
-pub async fn cleanup(pool: &SqlitePool, cutoff: &str) -> Result<i64, AppError> {
-    let r = sqlx::query("DELETE FROM usage_records WHERE started_at < ? AND NOT(stream=1 AND ended_at IS NULL) AND EXISTS (SELECT 1 FROM daily_usage_statistics d WHERE usage_records.started_at>=d.started_at AND usage_records.started_at<d.ended_at)")
+pub async fn cleanup(pool: &UserDb, cutoff: &str) -> Result<i64, AppError> {
+    let r = sqlx::query("DELETE FROM usage_records WHERE user_id=?1 AND started_at < ?2 AND NOT(stream=1 AND ended_at IS NULL) AND EXISTS (SELECT 1 FROM daily_usage_statistics d WHERE d.user_id=usage_records.user_id AND usage_records.started_at>=d.started_at AND usage_records.started_at<d.ended_at)").bind(pool.user_id())
         .bind(cutoff)
-        .execute(pool)
+        .execute(pool.raw())
         .await?;
     Ok(r.rows_affected() as i64)
 }
 
-pub async fn fail_unfinished_streams(pool: &SqlitePool, ended_at: &str) -> Result<i64, AppError> {
+pub async fn fail_unfinished_streams(pool: &UserDb, ended_at: &str) -> Result<i64, AppError> {
     let result = sqlx::query(
-        "UPDATE usage_records SET ended_at=?,duration_ms=CAST((julianday(?) - julianday(started_at))*86400000 AS INTEGER),success=0,status_code=504,error_code='stream_interrupted',error_message='流式请求因网关重启中断' WHERE stream=1 AND ended_at IS NULL",
-    )
+        "UPDATE usage_records SET ended_at=?2,duration_ms=CAST((julianday(?3) - julianday(started_at))*86400000 AS INTEGER),success=0,status_code=504,error_code='stream_interrupted',error_message='流式请求因网关重启中断' WHERE user_id=?1 AND stream=1 AND ended_at IS NULL",
+    ).bind(pool.user_id())
     .bind(ended_at)
     .bind(ended_at)
-    .execute(pool)
+    .execute(pool.raw())
     .await?;
     Ok(result.rows_affected() as i64)
 }
@@ -315,25 +323,26 @@ pub async fn fail_unfinished_streams(pool: &SqlitePool, ended_at: &str) -> Resul
 mod throughput_tests {
     use super::*;
 
-    async fn pool() -> SqlitePool {
+    async fn pool() -> UserDb {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        sqlx::raw_sql(include_str!("../../migrations/0001_baseline.sql"))
-            .execute(&pool)
+        let pool = UserDb::new(pool, "local");
+        sqlx::migrate!("./migrations")
+            .run(pool.raw())
             .await
             .unwrap();
         for id in ["a", "b"] {
-            sqlx::query("INSERT INTO accounts(id,name,type,base_url,api_key_encrypted,status,priority,multiplier,total_requests,total_tokens,created_at,updated_at) VALUES(?,?,'openai','https://example.com','','active',5,0.1,0,0,'2026-11-02','2026-11-02')")
-                .bind(id).bind(id).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO accounts(user_id,id,name,type,base_url,api_key_encrypted,status,priority,multiplier,total_requests,total_tokens,created_at,updated_at) VALUES('local',?,?,'openai','https://example.com','','active',5,0.1,0,0,'2026-11-02','2026-11-02')")
+                .bind(id).bind(id).execute(pool.raw()).await.unwrap();
         }
         pool
     }
 
     async fn insert(
-        pool: &SqlitePool,
+        pool: &UserDb,
         id: &str,
         output: Option<i64>,
         duration: Option<i64>,
@@ -342,9 +351,9 @@ mod throughput_tests {
         success: bool,
         ended: Option<&str>,
     ) {
-        sqlx::query("INSERT INTO usage_records(id,trace_id,account_id,started_at,ended_at,stream,success,attempts,output_tokens,duration_ms,first_token_ms) VALUES(?,?,'a','2026-11-02T01:00:00Z',?,?,?,1,?,?,?)")
+        sqlx::query("INSERT INTO usage_records(user_id,id,trace_id,account_id,started_at,ended_at,stream,success,attempts,output_tokens,duration_ms,first_token_ms) VALUES('local',?,?,'a','2026-11-02T01:00:00Z',?,?,?,1,?,?,?)")
             .bind(id).bind(id).bind(ended).bind(stream).bind(success)
-            .bind(output).bind(duration).bind(first).execute(pool).await.unwrap();
+            .bind(output).bind(duration).bind(first).execute(pool.raw()).await.unwrap();
     }
 
     #[tokio::test]

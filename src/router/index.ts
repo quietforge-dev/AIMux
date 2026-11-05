@@ -6,9 +6,11 @@ import UsagePage from '../pages/usage/UsagePage.vue';
 import StatisticsPage from '../pages/statistics/StatisticsPage.vue';
 import MonitorPage from '../pages/monitor/MonitorPage.vue';
 import MultiplierMonitorPage from '../pages/multiplier-monitor/MultiplierMonitorPage.vue';
+import UsersPage from '../pages/users/UsersPage.vue';
+import { useAuthStore } from '../stores/auth';
 import SettingsPage from '../pages/settings/SettingsPage.vue';
 
-export default createRouter({
+const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     {
@@ -23,7 +25,14 @@ export default createRouter({
         { path: 'monitor', component: MonitorPage },
         { path: 'multiplier-monitor', component: MultiplierMonitorPage },
         { path: 'settings', component: SettingsPage },
+        { path: 'users', component: UsersPage, meta: { requiresAdmin: true } },
       ],
     },
   ],
 });
+
+router.beforeEach((to) => {
+  const auth = useAuthStore();
+  if (auth.ready && to.meta.requiresAdmin && !auth.isAdmin) return '/accounts';
+});
+export default router;

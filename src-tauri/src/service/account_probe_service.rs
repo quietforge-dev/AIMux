@@ -1,8 +1,8 @@
 use std::time::Duration;
 
+use crate::database::UserDb;
 use reqwest::Response;
 use serde_json::{json, Value};
-use sqlx::SqlitePool;
 
 use crate::{
     config::Settings, dao::model_dao, error::AppError, model::account::Account,
@@ -16,7 +16,7 @@ pub struct AccountProbe {
 }
 
 pub async fn prepare(
-    pool: &SqlitePool,
+    pool: &UserDb,
     account: &Account,
     requested_model: Option<&str>,
 ) -> Result<Option<AccountProbe>, AppError> {

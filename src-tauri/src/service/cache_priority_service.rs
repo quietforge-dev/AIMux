@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use sqlx::SqlitePool;
+use crate::database::UserDb;
 use tokio::sync::Mutex;
 
 use crate::{config::Settings, dao::account_dao, error::AppError};
@@ -96,24 +96,25 @@ mod tests {
         );
     }
 
-    async fn pool() -> SqlitePool {
+    async fn pool() -> UserDb {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        sqlx::query("CREATE TABLE accounts (id TEXT PRIMARY KEY, priority INTEGER, last_error_code TEXT, last_error_message TEXT, updated_at TEXT)")
-            .execute(&pool).await.unwrap();
+        let pool = UserDb::new(pool, "local");
+        sqlx::query("CREATE TABLE accounts (user_id TEXT NOT NULL DEFAULT 'local', id TEXT PRIMARY KEY, priority INTEGER, last_error_code TEXT, last_error_message TEXT, updated_at TEXT)")
+            .execute(pool.raw()).await.unwrap();
         sqlx::query("INSERT INTO accounts (id,priority) VALUES ('a',9),('b',9)")
-            .execute(&pool)
+            .execute(pool.raw())
             .await
             .unwrap();
         pool
     }
 
-    async fn priority(pool: &SqlitePool) -> i64 {
+    async fn priority(pool: &UserDb) -> i64 {
         sqlx::query_scalar("SELECT priority FROM accounts WHERE id='a'")
-            .fetch_one(pool)
+            .fetch_one(pool.raw())
             .await
             .unwrap()
     }
@@ -350,7 +351,7 @@ mod tests {
         }
         assert_eq!(priority(&pool).await, 9);
         sqlx::query("CREATE TRIGGER reject_update BEFORE UPDATE ON accounts BEGIN SELECT RAISE(FAIL, 'test'); END")
-            .execute(&pool).await.unwrap();
+            .execute(pool.raw()).await.unwrap();
         assert!(tracker
             .finish_success(&pool, "a", Some(&ticket), Some(100), Some(0), Some(11000))
             .await
@@ -358,7 +359,7 @@ mod tests {
         assert_eq!(tracker.accounts["a"].count, 4);
         assert_eq!(tracker.accounts["a"].slow_count, 4);
         sqlx::query("DROP TRIGGER reject_update")
-            .execute(&pool)
+            .execute(pool.raw())
             .await
             .unwrap();
         tracker
@@ -508,7 +509,7 @@ mod tests {
     async fn disabled_policy_preserves_success_bonus_and_both_response_formats_match() {
         let pool = pool().await;
         sqlx::query("UPDATE accounts SET priority=4 WHERE id='a'")
-            .execute(&pool)
+            .execute(pool.raw())
             .await
             .unwrap();
         let disabled = Settings::default();
@@ -567,14 +568,14 @@ mod tests {
             .await
             .unwrap();
         sqlx::query("CREATE TRIGGER reject_update BEFORE UPDATE ON accounts BEGIN SELECT RAISE(FAIL, 'test'); END")
-            .execute(&pool).await.unwrap();
+            .execute(pool.raw()).await.unwrap();
         assert!(tracker
             .success(&pool, "a", Some(&ticket), Some(100), Some(0))
             .await
             .is_err());
         assert_eq!(tracker.accounts["a"].count, 1);
         sqlx::query("DROP TRIGGER reject_update")
-            .execute(&pool)
+            .execute(pool.raw())
             .await
             .unwrap();
         tracker
@@ -708,7 +709,7 @@ impl CachePriorityTracker {
     // through the priority write so concurrent completions cannot reorder mutations.
     pub async fn success(
         &mut self,
-        pool: &SqlitePool,
+        pool: &UserDb,
         account_id: &str,
         ticket: Option<&RequestTicket>,
         input: Option<i64>,
@@ -720,7 +721,7 @@ impl CachePriorityTracker {
 
     pub async fn finish_success(
         &mut self,
-        pool: &SqlitePool,
+        pool: &UserDb,
         account_id: &str,
         ticket: Option<&RequestTicket>,
         input: Option<i64>,

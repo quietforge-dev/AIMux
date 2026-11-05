@@ -1,3 +1,4 @@
+use crate::database::UserDb;
 use crate::{
     dao::{account_dao, daily_statistics_dao, usage_dao},
     error::AppError,
@@ -5,12 +6,11 @@ use crate::{
     utils::time::{local_today_utc_range, utc_datetime_string},
 };
 use chrono::{Local, Utc};
-use sqlx::SqlitePool;
 use std::collections::HashMap;
 
 const RECENT_CACHE_RATE_RECORD_LIMIT: i64 = 20;
 
-pub async fn tokens(pool: &SqlitePool) -> Result<serde_json::Value, AppError> {
+pub async fn tokens(pool: &UserDb) -> Result<serde_json::Value, AppError> {
     let (start_today, end_today) = local_today_utc_range();
     let yesterday_date = start_today
         .with_timezone(&Local)
@@ -47,7 +47,7 @@ pub async fn tokens(pool: &SqlitePool) -> Result<serde_json::Value, AppError> {
     )
 }
 async fn range(
-    pool: &SqlitePool,
+    pool: &UserDb,
     start: Option<chrono::DateTime<Utc>>,
     end: Option<chrono::DateTime<Utc>>,
 ) -> Result<TokenSummary, AppError> {
@@ -57,7 +57,7 @@ async fn range(
     Ok(summary(a, b, c, d))
 }
 pub async fn range_for_accounts(
-    pool: &SqlitePool,
+    pool: &UserDb,
     start: chrono::DateTime<Utc>,
     end: chrono::DateTime<Utc>,
 ) -> Result<HashMap<String, TokenSummary>, AppError> {
@@ -76,7 +76,7 @@ struct RecentCacheRate {
     count: i64,
 }
 async fn recent_cache_rates_for_accounts(
-    pool: &SqlitePool,
+    pool: &UserDb,
     start: chrono::DateTime<Utc>,
     end: chrono::DateTime<Utc>,
 ) -> Result<HashMap<String, RecentCacheRate>, AppError> {

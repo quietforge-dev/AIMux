@@ -1,3 +1,4 @@
+use crate::database::UserDb;
 use crate::{
     dao::usage_dao,
     error::AppError,
@@ -5,10 +6,9 @@ use crate::{
     schema::usage_schema::{UsageResponse, UsageSummary},
     utils::time::utc_days_ago_string,
 };
-use sqlx::SqlitePool;
 
 pub async fn list(
-    pool: &SqlitePool,
+    pool: &UserDb,
     offset: i64,
     limit: i64,
     account_id: Option<&str>,
@@ -50,7 +50,7 @@ pub async fn list(
     })
 }
 async fn summary(
-    pool: &SqlitePool,
+    pool: &UserDb,
     account_id: Option<&str>,
     model: Option<&str>,
     kind: Option<&str>,
@@ -81,10 +81,10 @@ async fn summary(
         total_tokens: tokens,
     })
 }
-pub async fn detail(pool: &SqlitePool, id: &str) -> Result<Option<UsageRecord>, AppError> {
+pub async fn detail(pool: &UserDb, id: &str) -> Result<Option<UsageRecord>, AppError> {
     usage_dao::get(pool, id).await
 }
-pub async fn cleanup(pool: &SqlitePool, days: i64) -> Result<i64, AppError> {
+pub async fn cleanup(pool: &UserDb, days: i64) -> Result<i64, AppError> {
     if !matches!(days, 7 | 30 | 90) {
         return Err(AppError::BadRequest("清理天数只支持 7、30 或 90 天".into()));
     }
@@ -103,8 +103,9 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        sqlx::raw_sql(include_str!("../../migrations/0001_baseline.sql"))
-            .execute(&pool)
+        let pool = UserDb::new(pool, "local");
+        sqlx::migrate!("./migrations")
+            .run(pool.raw())
             .await
             .unwrap();
         for (id, effort, success) in [
@@ -116,8 +117,8 @@ mod tests {
             ("6", Some("none"), true),
             ("7", Some("low"), false),
         ] {
-            sqlx::query("INSERT INTO usage_records(id,trace_id,started_at,account_type,model,reasoning_effort,stream,success,attempts,total_tokens,duration_ms) VALUES(?,?,'2026-11-05T08:00:00Z','openai','test-model',?,0,?,1,10,100)")
-                .bind(id).bind(id).bind(effort).bind(success).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO usage_records(user_id,id,trace_id,started_at,account_type,model,reasoning_effort,stream,success,attempts,total_tokens,duration_ms) VALUES('local',?,?,'2026-11-05T08:00:00Z','openai','test-model',?,0,?,1,10,100)")
+                .bind(id).bind(id).bind(effort).bind(success).execute(pool.raw()).await.unwrap();
         }
         for (effort, expected, ok) in [
             (None, 7, 5),

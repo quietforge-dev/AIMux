@@ -7,11 +7,12 @@ import router from './router';
 import App from './App.vue';
 import { invoke } from '@tauri-apps/api/core';
 import { ElMessageBox } from 'element-plus';
-import { setApiBase } from './api/client';
+import { setApiBase, setDesktopToken } from './api/client';
 
 const configureTauriGateway = async (): Promise<boolean> => {
   try {
     setApiBase(await invoke<string>('gateway_url'));
+    setDesktopToken(await invoke<string>('desktop_token'));
     return true;
   } catch {
     // 浏览器直接运行前端时，继续使用 VITE_API_BASE 或默认 7789 端口。

@@ -1,3 +1,4 @@
+use crate::database::UserDb;
 use crate::{
     config::Settings,
     dao::account_dao,
@@ -6,9 +7,8 @@ use crate::{
     model::account::Account,
     schema::account_schema::{AccountCreate, AccountUpdate, AccountView},
 };
-use sqlx::SqlitePool;
 
-async fn validate_provider(pool: &SqlitePool, provider: Option<&str>) -> Result<(), AppError> {
+async fn validate_provider(pool: &UserDb, provider: Option<&str>) -> Result<(), AppError> {
     let Some(provider) = provider.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(());
     };
@@ -33,13 +33,13 @@ async fn validate_provider(pool: &SqlitePool, provider: Option<&str>) -> Result<
     Ok(())
 }
 
-pub async fn create(pool: &SqlitePool, payload: AccountCreate) -> Result<Account, AppError> {
+pub async fn create(pool: &UserDb, payload: AccountCreate) -> Result<Account, AppError> {
     validate_provider(pool, payload.provider.as_deref()).await?;
     account_dao::create(pool, payload).await
 }
 
 pub async fn update(
-    pool: &SqlitePool,
+    pool: &UserDb,
     current: Account,
     payload: AccountUpdate,
 ) -> Result<Account, AppError> {
@@ -54,21 +54,21 @@ pub async fn update(
 }
 
 pub async fn set_super_priority(
-    pool: &SqlitePool,
+    pool: &UserDb,
     id: &str,
     enabled: bool,
 ) -> Result<Account, AppError> {
     account_dao::set_super_priority(pool, id, enabled).await
 }
 
-pub async fn to_view(pool: &SqlitePool, id: &str) -> Result<AccountView, AppError> {
+pub async fn to_view(pool: &UserDb, id: &str) -> Result<AccountView, AppError> {
     account_dao::get(pool, id)
         .await?
         .map(account_dao::to_view)
         .ok_or_else(|| AppError::NotFound("账号不存在".into()))
 }
 pub async fn record_failure(
-    pool: &SqlitePool,
+    pool: &UserDb,
     id: &str,
     settings: &Settings,
     code: Option<&str>,
@@ -87,11 +87,11 @@ fn failure_priority_penalty(settings: &Settings, code: Option<&str>) -> u8 {
     }
     .clamp(1, 3)
 }
-pub async fn record_success(pool: &SqlitePool, id: &str) -> Result<(), AppError> {
+pub async fn record_success(pool: &UserDb, id: &str) -> Result<(), AppError> {
     account_dao::adjust(pool, id, true, "request", None, None).await
 }
 pub async fn record_monitor(
-    pool: &SqlitePool,
+    pool: &UserDb,
     id: &str,
     ok: bool,
     code: Option<&str>,
@@ -153,11 +153,12 @@ mod tests {
 
     #[tokio::test]
     async fn failure_deduction_is_applied_once_and_priority_stays_nonnegative() {
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query("CREATE TABLE accounts (id TEXT PRIMARY KEY, priority INTEGER, last_error_code TEXT, last_error_message TEXT, updated_at TEXT)")
-            .execute(&pool).await.unwrap();
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = UserDb::new(pool, "local");
+        sqlx::query("CREATE TABLE accounts (user_id TEXT NOT NULL DEFAULT 'local', id TEXT PRIMARY KEY, priority INTEGER, last_error_code TEXT, last_error_message TEXT, updated_at TEXT)")
+            .execute(pool.raw()).await.unwrap();
         sqlx::query("INSERT INTO accounts(id,priority) VALUES('test',9)")
-            .execute(&pool)
+            .execute(pool.raw())
             .await
             .unwrap();
         let settings = Settings::default();
@@ -170,20 +171,20 @@ mod tests {
                 .await
                 .unwrap();
             let priority: i64 = sqlx::query_scalar("SELECT priority FROM accounts WHERE id='test'")
-                .fetch_one(&pool)
+                .fetch_one(pool.raw())
                 .await
                 .unwrap();
             assert_eq!(priority, expected);
         }
         sqlx::query("UPDATE accounts SET priority=1")
-            .execute(&pool)
+            .execute(pool.raw())
             .await
             .unwrap();
         record_failure(&pool, "test", &settings, Some("upstream_error"), None)
             .await
             .unwrap();
         let priority: i64 = sqlx::query_scalar("SELECT priority FROM accounts WHERE id='test'")
-            .fetch_one(&pool)
+            .fetch_one(pool.raw())
             .await
             .unwrap();
         assert_eq!(priority, 0);

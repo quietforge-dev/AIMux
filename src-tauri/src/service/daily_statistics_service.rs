@@ -1,6 +1,6 @@
+use crate::database::UserDb;
 use crate::{dao::daily_statistics_dao as dao, error::AppError, utils::time::utc_datetime_string};
 use chrono::{DateTime, Days, Local, NaiveDate, NaiveTime, TimeZone, Utc};
-use sqlx::SqlitePool;
 use std::collections::BTreeSet;
 
 pub fn day_range<T: TimeZone>(
@@ -28,7 +28,7 @@ pub fn eligible_date<T: TimeZone>(now: &DateTime<T>) -> Option<NaiveDate> {
     now.date_naive().checked_sub_days(Days::new(days))
 }
 
-pub async fn catch_up(pool: &SqlitePool, now: DateTime<Local>) -> Result<usize, AppError> {
+pub async fn catch_up(pool: &UserDb, now: DateTime<Local>) -> Result<usize, AppError> {
     let Some(last) = eligible_date(&now) else {
         return Ok(0);
     };

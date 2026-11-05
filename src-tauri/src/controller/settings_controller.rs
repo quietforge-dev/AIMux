@@ -1,10 +1,12 @@
 use crate::{
-    app_state::AppState, error::AppError, schema::settings_schema::MonitoringSettingsUpdate,
+    app_state::{AppState, ServerState},
+    error::AppError,
+    schema::settings_schema::MonitoringSettingsUpdate,
     service::settings_service,
 };
-use axum::{extract::State, routing::get, Json, Router};
+use axum::{extract::Extension, routing::get, Json, Router};
 use std::sync::Arc;
-pub fn routes() -> Router<Arc<AppState>> {
+pub fn routes() -> Router<Arc<ServerState>> {
     Router::new()
         .route("/api/settings", get(get_settings).put(update_settings))
         .route(
@@ -12,23 +14,24 @@ pub fn routes() -> Router<Arc<AppState>> {
             axum::routing::put(update_monitoring),
         )
 }
-async fn get_settings(State(s): State<Arc<AppState>>) -> Json<crate::config::Settings> {
+async fn get_settings(Extension(s): Extension<Arc<AppState>>) -> Json<crate::config::Settings> {
     Json(s.settings.read().await.clone())
 }
 async fn update_settings(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Json(value): Json<crate::config::Settings>,
 ) -> Result<Json<crate::config::Settings>, AppError> {
     let mut tracker = s.cache_priority.lock().await;
-    let saved = settings_service::update(&s.settings, value).await?;
+    let saved = settings_service::update(&s.pool, s.desktop, &s.settings, value).await?;
     tracker.configure(&saved);
     Ok(Json(saved))
 }
 async fn update_monitoring(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Json(value): Json<MonitoringSettingsUpdate>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let saved = settings_service::update_monitoring(
+        &s.pool,
         &s.settings,
         value.monitoring_enabled,
         value.monitoring_start_time,

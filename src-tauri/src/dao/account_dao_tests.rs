@@ -3,31 +3,52 @@ use crate::service::account_service;
 use serde_json::json;
 use sqlx::sqlite::SqlitePoolOptions;
 
-async fn pool() -> SqlitePool {
+async fn pool() -> UserDb {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let pool = UserDb::new(pool, "local");
+    sqlx::migrate!("./migrations")
+        .run(pool.raw())
+        .await
+        .unwrap();
     seed_models(&pool).await;
     pool
 }
 
-async fn seed_models(pool: &SqlitePool) {
+async fn seed_models(pool: &UserDb) {
     for (kind, provider, model) in [
         ("openai", "openai", "gpt-test"),
         ("openai", "deepseek", "deepseek-test"),
         ("anthropic", "anthropic", "claude-test"),
         ("openai", "anthropic", "claude-compatible"),
     ] {
-        sqlx::query("INSERT INTO models(id,name,type,provider,is_default,created_at,updated_at) VALUES(?,?,?,?,0,'test','test')")
-            .bind(model).bind(model).bind(kind).bind(provider).execute(pool).await.unwrap();
+        let scoped: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('models') WHERE name='user_id')",
+        )
+        .fetch_one(pool.raw())
+        .await
+        .unwrap();
+        let sql = if scoped {
+            "INSERT INTO models(user_id,id,name,type,provider,is_default,created_at,updated_at) VALUES('local',?,?,?,?,0,'test','test')"
+        } else {
+            "INSERT INTO models(id,name,type,provider,is_default,created_at,updated_at) VALUES(?,?,?,?,0,'test','test')"
+        };
+        sqlx::query(sql)
+            .bind(model)
+            .bind(model)
+            .bind(kind)
+            .bind(provider)
+            .execute(pool.raw())
+            .await
+            .unwrap();
     }
 }
 
 async fn account(
-    pool: &SqlitePool,
+    pool: &UserDb,
     name: &str,
     kind: &str,
     provider: Option<&str>,
@@ -50,7 +71,7 @@ async fn account(
     .unwrap()
 }
 
-async fn selected(pool: &SqlitePool, model: Option<&str>, kind: &str) -> String {
+async fn selected(pool: &UserDb, model: Option<&str>, kind: &str) -> String {
     pick_one(pool, model, kind).await.unwrap().unwrap().id
 }
 
@@ -366,9 +387,13 @@ async fn migration_backfills_only_unambiguous_complete_model_lists() {
         .connect("sqlite::memory:")
         .await
         .unwrap();
+    let pool = UserDb::new(pool, "local");
     let migrator = sqlx::migrate!("./migrations");
     for migration in migrator.iter().filter(|migration| migration.version < 13) {
-        sqlx::raw_sql(&migration.sql).execute(&pool).await.unwrap();
+        sqlx::raw_sql(&migration.sql)
+            .execute(pool.raw())
+            .await
+            .unwrap();
     }
     seed_models(&pool).await;
     for (id, models) in [
@@ -382,12 +407,18 @@ async fn migration_backfills_only_unambiguous_complete_model_lists() {
         ("null", None),
     ] {
         sqlx::query("INSERT INTO accounts(id,name,type,base_url,api_key_encrypted,status,priority,multiplier,total_requests,total_tokens,created_at,updated_at,supported_models) VALUES(?,?,'openai','https://example.invalid','fake','active',8,0.8,10,500,'old','old',?)")
-            .bind(id).bind(id).bind(models).execute(&pool).await.unwrap();
+            .bind(id).bind(id).bind(models).execute(pool.raw()).await.unwrap();
     }
     sqlx::raw_sql(include_str!(
         "../../migrations/0013_accounts_provider_super_priority.sql"
     ))
-    .execute(&pool)
+    .execute(pool.raw())
+    .await
+    .unwrap();
+    sqlx::raw_sql(include_str!(
+        "../../migrations/0014_users_and_isolation.sql"
+    ))
+    .execute(pool.raw())
     .await
     .unwrap();
     let known = get(&pool, "known").await.unwrap().unwrap();
@@ -412,6 +443,7 @@ async fn concurrent_enables_are_serialized_without_unique_constraint() {
     tokio::fs::create_dir(&folder).await.unwrap();
     let path = folder.join("test.db");
     let pool = crate::database::connect(&path).await.unwrap();
+    let pool = UserDb::new(pool, "local");
     seed_models(&pool).await;
     let a = account(
         &pool,
@@ -441,12 +473,13 @@ async fn concurrent_enables_are_serialized_without_unique_constraint() {
     );
     first.unwrap();
     second.unwrap();
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE type='openai' AND provider='openai' AND super_priority=1").fetch_one(&pool).await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE type='openai' AND provider='openai' AND super_priority=1").fetch_one(pool.raw()).await.unwrap();
     assert_eq!(count, 1);
     pool.close().await;
     let reopened = crate::database::connect(&path).await.unwrap();
+    let reopened = UserDb::new(reopened, "local");
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE super_priority=1")
-        .fetch_one(&reopened)
+        .fetch_one(reopened.raw())
         .await
         .unwrap();
     assert_eq!(count, 1);

@@ -24,8 +24,15 @@
         <el-menu-item index="/settings"
           ><el-icon><Setting /></el-icon>设置</el-menu-item
         >
+        <el-menu-item v-if="auth.isAdmin" index="/users"
+          ><el-icon><UserFilled /></el-icon>用户管理</el-menu-item
+        >
       </el-menu>
       <div class="sidebar-foot">
+        <template v-if="!auth.desktop">
+          <div>{{ auth.user?.username }}</div>
+          <el-button text class="sidebar-action" @click="logout">退出登录</el-button>
+        </template>
         <div>{{ clock }}</div>
         <div class="sidebar-actions">
           <el-button text class="sidebar-action" @click="openGithub">
@@ -79,12 +86,23 @@ import {
   Tickets,
   TrendCharts,
   User,
+  UserFilled,
 } from '@element-plus/icons-vue';
 import { Github, RefreshCw } from 'lucide-vue-next';
+import { useAuthStore } from '../stores/auth';
 import { useAppStore } from '../stores/app';
 import AppUpdateDialog from '../components/app/AppUpdateDialog.vue';
 import { useAppUpdater } from '../composables/useAppUpdater';
 const route = useRoute();
+const auth = useAuthStore();
+const logout = async () => {
+  try {
+    await auth.logout();
+    window.dispatchEvent(new CustomEvent('aimux-auth-required'));
+  } catch (e) {
+    ElMessage.error(String(e));
+  }
+};
 const app = useAppStore();
 const clock = computed(() => app.now.toLocaleTimeString('zh-CN', { hour12: false }));
 

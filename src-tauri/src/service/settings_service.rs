@@ -59,7 +59,12 @@ pub fn validate_monitoring_window(start: Option<&str>, end: Option<&str>) -> Res
     }
 }
 
-pub async fn update(settings: &RwLock<Settings>, mut next: Settings) -> Result<Settings, AppError> {
+pub async fn update(
+    db: &crate::database::UserDb,
+    desktop: bool,
+    settings: &RwLock<Settings>,
+    mut next: Settings,
+) -> Result<Settings, AppError> {
     let mut current = settings.write().await;
     next.monitoring_enabled = current.monitoring_enabled;
     next.monitoring_start_time = current.monitoring_start_time.clone();
@@ -68,13 +73,44 @@ pub async fn update(settings: &RwLock<Settings>, mut next: Settings) -> Result<S
     next.monitoring_interval_minutes = current.monitoring_interval_minutes;
     next.monitoring_recent_count = current.monitoring_recent_count;
     validate(&next).map_err(AppError::BadRequest)?;
-    next.save()
-        .map_err(|error| AppError::Internal(format!("保存设置失败：{error}")))?;
+    if !desktop {
+        next.host = current.host.clone();
+        next.port = current.port;
+    }
+    next.local_token.clear();
+    if !desktop {
+        next.launch_at_login = current.launch_at_login;
+    }
+    let machine_changed = desktop
+        && (next.host != current.host
+            || next.port != current.port
+            || next.launch_at_login != current.launch_at_login);
+    let mut tx = db.begin().await?;
+    crate::dao::settings_dao::save_tx(&mut tx, db.user_id(), &next).await?;
+    if machine_changed {
+        save_machine(next.clone()).await?;
+    }
+    if let Err(error) = tx.commit().await {
+        if machine_changed {
+            if let Err(restore_error) = save_machine(current.clone()).await {
+                tracing::error!(%restore_error, "保存设置失败且无法恢复机器配置");
+            }
+        }
+        return Err(error.into());
+    }
     *current = next.clone();
     Ok(next)
 }
 
+async fn save_machine(settings: Settings) -> Result<(), AppError> {
+    tokio::task::spawn_blocking(move || settings.save_machine())
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .map_err(|e| AppError::Internal(e.to_string()))
+}
+
 pub async fn update_monitoring(
+    db: &crate::database::UserDb,
     settings: &RwLock<Settings>,
     monitoring_enabled: bool,
     monitoring_start_time: Option<String>,
@@ -102,8 +138,7 @@ pub async fn update_monitoring(
         next.monitoring_recent_count = value;
     }
     validate(&next).map_err(AppError::BadRequest)?;
-    next.save()
-        .map_err(|error| AppError::Internal(format!("保存账号监控设置失败：{error}")))?;
+    crate::dao::settings_dao::save(db, &next).await?;
     *current = next.clone();
     Ok(next)
 }

@@ -17,9 +17,10 @@ pub mod service;
 pub mod upstream;
 pub mod utils;
 
+#[cfg(feature = "desktop")]
 use std::sync::Arc;
 
-use app_state::AppState;
+use app_state::ServerState;
 use config::Settings;
 #[cfg(feature = "desktop")]
 use tauri::{
@@ -34,13 +35,13 @@ const STABLE_GATEWAY_PORT: u16 = 7789;
 const DEVELOPMENT_DESKTOP_PORT: u16 = 7790;
 
 #[cfg(all(feature = "desktop", debug_assertions))]
-fn load_runtime_settings() -> Settings {
-    Settings::load().unwrap_or_default()
+fn load_runtime_settings() -> anyhow::Result<Settings> {
+    Settings::load()
 }
 
 #[cfg(all(feature = "desktop", not(debug_assertions)))]
-fn load_runtime_settings() -> Settings {
-    let mut settings = Settings::load().unwrap_or_default();
+fn load_runtime_settings() -> anyhow::Result<Settings> {
+    let mut settings = Settings::load()?;
     if settings.port == DEVELOPMENT_DESKTOP_PORT {
         settings.port = STABLE_GATEWAY_PORT;
         if let Err(error) = settings.save() {
@@ -49,36 +50,29 @@ fn load_runtime_settings() -> Settings {
             tracing::info!(port = STABLE_GATEWAY_PORT, "正式版已恢复稳定网关端口");
         }
     }
-    settings
+    Ok(settings)
 }
 
 #[cfg(feature = "desktop")]
 pub fn run() {
     logging::init();
-    let settings = load_runtime_settings();
+    let settings = match load_runtime_settings() {
+        Ok(settings) => settings,
+        Err(error) => {
+            tracing::error!(%error, "读取设置失败，请修复 settings.json 后重试");
+            return;
+        }
+    };
     let runtime = tokio::runtime::Runtime::new().expect("创建 Tokio runtime 失败");
-    let state = match runtime.block_on(AppState::initialize(settings)) {
+    let state = match runtime.block_on(ServerState::initialize(settings, true)) {
         Ok(state) => state,
         Err(error) => {
             tracing::error!(%error, "初始化 AIMux 失败");
             return;
         }
     };
-    let shared = Arc::new(state);
-    let statistics_state = Arc::clone(&shared);
-    runtime.spawn(background::daily_statistics_task::run(statistics_state));
-    let account_status_state = Arc::clone(&shared);
-    runtime.spawn(async move {
-        background::account_status_task::run(account_status_state).await;
-    });
-    let monitor_state = Arc::clone(&shared);
-    runtime.spawn(async move {
-        background::monitor_task::run(monitor_state).await;
-    });
-    let multiplier_monitor_state = Arc::clone(&shared);
-    runtime.spawn(async move {
-        background::multiplier_monitor_task::run(multiplier_monitor_state).await;
-    });
+    let shared = state;
+    runtime.spawn(shared.clone().supervise());
     let server_state = Arc::clone(&shared);
     runtime.spawn(async move {
         if let Err(error) = controller::serve(server_state).await {
@@ -99,6 +93,7 @@ pub fn run() {
             commands::open_external_url,
             commands::app_version,
             commands::gateway_url,
+            commands::desktop_token,
             commands::open_devtools,
             commands::minimize_to_tray,
             commands::exit_app
@@ -170,23 +165,10 @@ pub fn run_gateway() -> Result<(), String> {
     let settings = Settings::load().map_err(|error| format!("读取设置失败: {error}"))?;
     let runtime = tokio::runtime::Runtime::new().map_err(|error| error.to_string())?;
     let state = runtime
-        .block_on(async { AppState::initialize(settings).await })
+        .block_on(async { ServerState::initialize(settings, false).await })
         .map_err(|error| format!("初始化 AIMux 失败: {error}"))?;
-    let shared = Arc::new(state);
-    let statistics_state = Arc::clone(&shared);
-    runtime.spawn(background::daily_statistics_task::run(statistics_state));
-    let account_status_state = Arc::clone(&shared);
-    runtime.spawn(async move {
-        background::account_status_task::run(account_status_state).await;
-    });
-    let monitor_state = Arc::clone(&shared);
-    runtime.spawn(async move {
-        background::monitor_task::run(monitor_state).await;
-    });
-    let multiplier_monitor_state = Arc::clone(&shared);
-    runtime.spawn(async move {
-        background::multiplier_monitor_task::run(multiplier_monitor_state).await;
-    });
+    let shared = state;
+    runtime.spawn(shared.clone().supervise());
     runtime
         .block_on(controller::serve(shared))
         .map_err(|error| format!("AIMux HTTP 服务退出: {error}"))

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     pub host: String,
     pub port: u16,
@@ -139,7 +140,7 @@ impl Settings {
             settings
         } else {
             let raw = std::fs::read_to_string(path)?;
-            serde_json::from_str(&raw).unwrap_or_default()
+            serde_json::from_str(&raw)?
         };
         settings.apply_environment_overrides();
         Ok(settings)
@@ -150,6 +151,21 @@ impl Settings {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(path, serde_json::to_vec_pretty(self)?)?;
+        Ok(())
+    }
+
+    pub fn save_machine(&self) -> anyhow::Result<()> {
+        let path = Self::config_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let value = serde_json::json!({"host":self.host,"port":self.port,"launch_at_login":self.launch_at_login});
+        let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+        std::fs::write(&temporary, serde_json::to_vec_pretty(&value)?)?;
+        if let Err(error) = std::fs::rename(&temporary, &path) {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error.into());
+        }
         Ok(())
     }
 

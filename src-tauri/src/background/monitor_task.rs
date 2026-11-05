@@ -500,7 +500,7 @@ mod probe_tests {
 }
 
 async fn rebalance(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::database::UserDb,
     results: Vec<(String, String, bool, String)>,
 ) -> Result<(), crate::error::AppError> {
     for ((account_type, model), successful_ids) in successful_accounts_by_probe_model(&results) {

@@ -1,5 +1,5 @@
+use crate::database::UserDb;
 use serde_json::Value;
-use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::{
@@ -9,17 +9,18 @@ use crate::{
     utils::time::{unix_now_millis, utc_now_string},
 };
 
-pub async fn get(pool: &SqlitePool, id: &str) -> Result<Option<Account>, AppError> {
+pub async fn get(pool: &UserDb, id: &str) -> Result<Option<Account>, AppError> {
     Ok(
-        sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE id = ?")
+        sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE user_id=?1 AND id = ?2")
+            .bind(pool.user_id())
             .bind(id)
-            .fetch_optional(pool)
+            .fetch_optional(pool.raw())
             .await?,
     )
 }
 
 pub async fn list(
-    pool: &SqlitePool,
+    pool: &UserDb,
     offset: i64,
     limit: i64,
     account_type: Option<&str>,
@@ -27,8 +28,8 @@ pub async fn list(
     name: Option<&str>,
 ) -> Result<(Vec<Account>, i64), AppError> {
     expire_disabled(pool).await?;
-    let mut sql = String::from("SELECT * FROM accounts WHERE 1=1");
-    let mut count = String::from("SELECT COUNT(*) FROM accounts WHERE 1=1");
+    let mut sql = String::from("SELECT * FROM accounts WHERE user_id=?");
+    let mut count = String::from("SELECT COUNT(*) FROM accounts WHERE user_id=?");
     if account_type.is_some() {
         sql.push_str(" AND type = ?");
         count.push_str(" AND type = ?");
@@ -42,7 +43,7 @@ pub async fn list(
         count.push_str(" AND lower(name) LIKE lower(?)");
     }
     sql.push_str(" ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, priority DESC, multiplier ASC, monitor_average_duration_ms IS NULL ASC, monitor_average_duration_ms ASC, lower(name), id LIMIT ? OFFSET ?");
-    let mut query = sqlx::query_as::<_, Account>(&sql);
+    let mut query = sqlx::query_as::<_, Account>(&sql).bind(pool.user_id());
     if let Some(value) = account_type {
         query = query.bind(value);
     }
@@ -52,8 +53,8 @@ pub async fn list(
     if let Some(value) = name {
         query = query.bind(format!("%{}%", value.trim()));
     }
-    let accounts = query.bind(limit).bind(offset).fetch_all(pool).await?;
-    let mut total_query = sqlx::query_scalar::<_, i64>(&count);
+    let accounts = query.bind(limit).bind(offset).fetch_all(pool.raw()).await?;
+    let mut total_query = sqlx::query_scalar::<_, i64>(&count).bind(pool.user_id());
     if let Some(value) = account_type {
         total_query = total_query.bind(value);
     }
@@ -63,11 +64,11 @@ pub async fn list(
     if let Some(value) = name {
         total_query = total_query.bind(format!("%{}%", value.trim()));
     }
-    Ok((accounts, total_query.fetch_one(pool).await?))
+    Ok((accounts, total_query.fetch_one(pool.raw()).await?))
 }
 
 pub async fn pick_one(
-    pool: &SqlitePool,
+    pool: &UserDb,
     model: Option<&str>,
     account_type: &str,
 ) -> Result<Option<Account>, AppError> {
@@ -80,7 +81,7 @@ pub async fn pick_one(
 
 /// Monitoring compares ordinary candidates without applying the user's routing override.
 pub async fn pick_one_normal(
-    pool: &SqlitePool,
+    pool: &UserDb,
     model: Option<&str>,
     account_type: &str,
 ) -> Result<Option<Account>, AppError> {
@@ -88,13 +89,13 @@ pub async fn pick_one_normal(
 }
 
 async fn pick_account(
-    pool: &SqlitePool,
+    pool: &UserDb,
     model: Option<&str>,
     account_type: &str,
     provider: Option<&str>,
 ) -> Result<Option<Account>, AppError> {
     expire_disabled(pool).await?;
-    let accounts = sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE status='active' AND type=? ORDER BY priority DESC, multiplier ASC, monitor_average_duration_ms IS NULL ASC, monitor_average_duration_ms ASC, lower(name), id").bind(account_type).fetch_all(pool).await?;
+    let accounts = sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE user_id=?1 AND status='active' AND type=?2 ORDER BY priority DESC, multiplier ASC, monitor_average_duration_ms IS NULL ASC, monitor_average_duration_ms ASC, lower(name), id").bind(pool.user_id()).bind(account_type).fetch_all(pool.raw()).await?;
     let mut eligible: Vec<Account> = accounts
         .into_iter()
         .filter(|a| supported(a.supported_models.as_deref(), model))
@@ -142,7 +143,7 @@ fn supported(raw: Option<&str>, model: Option<&str>) -> bool {
     models.is_empty() || models.iter().any(|item| item == model)
 }
 
-pub async fn create(pool: &SqlitePool, payload: AccountCreate) -> Result<Account, AppError> {
+pub async fn create(pool: &UserDb, payload: AccountCreate) -> Result<Account, AppError> {
     validate(
         &payload.name,
         &payload.account_type,
@@ -156,10 +157,16 @@ pub async fn create(pool: &SqlitePool, payload: AccountCreate) -> Result<Account
     let provider = normalize_provider(payload.provider);
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if payload.super_priority {
-        clear_other_super_priorities(&mut tx, &id, &payload.account_type, provider.as_deref())
-            .await?;
+        clear_other_super_priorities(
+            pool.user_id(),
+            &mut tx,
+            &id,
+            &payload.account_type,
+            provider.as_deref(),
+        )
+        .await?;
     }
-    sqlx::query("INSERT INTO accounts (id,name,type,base_url,api_key_encrypted,status,priority,multiplier,test_default_model,model_mappings,supported_models,tags,notes,total_requests,total_tokens,created_at,updated_at,provider,super_priority) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0,0,?,?,?,?)")
+    sqlx::query("INSERT INTO accounts (user_id,id,name,type,base_url,api_key_encrypted,status,priority,multiplier,test_default_model,model_mappings,supported_models,tags,notes,total_requests,total_tokens,created_at,updated_at,provider,super_priority) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,0,0,?15,?16,?17,?18)").bind(pool.user_id())
         .bind(&id).bind(payload.name.trim()).bind(&payload.account_type).bind(payload.base_url.trim_end_matches('/')).bind(payload.api_key).bind(payload.status).bind(payload.priority).bind(payload.multiplier).bind(payload.test_default_model).bind(json_text(payload.model_mappings)).bind(json_opt_vec(payload.supported_models)).bind(json_opt_vec(payload.tags)).bind(payload.notes).bind(&now).bind(&now).bind(provider).bind(payload.super_priority).execute(&mut *tx).await?;
     tx.commit().await?;
     get(pool, &id)
@@ -168,13 +175,14 @@ pub async fn create(pool: &SqlitePool, payload: AccountCreate) -> Result<Account
 }
 
 pub async fn update(
-    pool: &SqlitePool,
+    pool: &UserDb,
     current: Account,
     payload: AccountUpdate,
 ) -> Result<Account, AppError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     // Read after acquiring the write lock so a stale form cannot resurrect a replaced override.
-    let current = sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE id=?")
+    let current = sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE user_id=?1 AND id=?2")
+        .bind(pool.user_id())
         .bind(&current.id)
         .fetch_optional(&mut *tx)
         .await?
@@ -230,10 +238,16 @@ pub async fn update(
     )?;
     let now = utc_now_string();
     if super_priority {
-        clear_other_super_priorities(&mut tx, &current_id, &account_type, provider.as_deref())
-            .await?;
+        clear_other_super_priorities(
+            pool.user_id(),
+            &mut tx,
+            &current_id,
+            &account_type,
+            provider.as_deref(),
+        )
+        .await?;
     }
-    sqlx::query("UPDATE accounts SET name=?,type=?,base_url=?,api_key_encrypted=?,status=?,priority=?,multiplier=?,test_default_model=?,model_mappings=?,supported_models=?,tags=?,notes=?,updated_at=?,provider=?,super_priority=? WHERE id=?")
+    sqlx::query("UPDATE accounts SET name=?2,type=?3,base_url=?4,api_key_encrypted=?5,status=?6,priority=?7,multiplier=?8,test_default_model=?9,model_mappings=?10,supported_models=?11,tags=?12,notes=?13,updated_at=?14,provider=?15,super_priority=?16 WHERE user_id=?1 AND id=?17").bind(pool.user_id())
         .bind(name).bind(account_type).bind(base_url.trim_end_matches('/')).bind(api_key).bind(status).bind(priority).bind(multiplier).bind(test_default_model).bind(model_mappings).bind(supported_models).bind(tags).bind(notes).bind(now).bind(provider).bind(super_priority).bind(&current_id).execute(&mut *tx).await?;
     tx.commit().await?;
     get(pool, &current_id)
@@ -241,27 +255,30 @@ pub async fn update(
         .ok_or_else(|| AppError::Internal("更新账号后读取失败".into()))
 }
 
-pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), AppError> {
-    sqlx::query("DELETE FROM multiplier_monitor_configs WHERE account_id=?")
+pub async fn delete(pool: &UserDb, id: &str) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM multiplier_monitor_configs WHERE user_id=?1 AND account_id=?2")
+        .bind(pool.user_id())
         .bind(id)
-        .execute(pool)
+        .execute(pool.raw())
         .await?;
-    sqlx::query("DELETE FROM accounts WHERE id=?")
+    sqlx::query("DELETE FROM accounts WHERE user_id=?1 AND id=?2")
+        .bind(pool.user_id())
         .bind(id)
-        .execute(pool)
+        .execute(pool.raw())
         .await?;
     Ok(())
 }
-pub async fn save_priority(pool: &SqlitePool, id: &str, priority: i64) -> Result<(), AppError> {
-    sqlx::query("UPDATE accounts SET priority=?, updated_at=? WHERE id=?")
+pub async fn save_priority(pool: &UserDb, id: &str, priority: i64) -> Result<(), AppError> {
+    sqlx::query("UPDATE accounts SET priority=?2, updated_at=?3 WHERE user_id=?1 AND id=?4")
+        .bind(pool.user_id())
         .bind(priority.clamp(0, 9))
         .bind(utc_now_string())
         .bind(id)
-        .execute(pool)
+        .execute(pool.raw())
         .await?;
     Ok(())
 }
-pub async fn toggle_status(pool: &SqlitePool, id: &str) -> Result<Option<Account>, AppError> {
+pub async fn toggle_status(pool: &UserDb, id: &str) -> Result<Option<Account>, AppError> {
     let current = get(pool, id).await?;
     let Some(current) = current else {
         return Ok(None);
@@ -274,7 +291,7 @@ pub async fn toggle_status(pool: &SqlitePool, id: &str) -> Result<Option<Account
 }
 
 pub async fn set_status(
-    pool: &SqlitePool,
+    pool: &UserDb,
     id: &str,
     status: &str,
     duration_hours: Option<i64>,
@@ -294,39 +311,40 @@ pub async fn set_status(
         },
         _ => return Err(AppError::BadRequest("账号状态不支持".into())),
     };
-    sqlx::query("UPDATE accounts SET status=?, disabled_until=?, updated_at=? WHERE id=?")
+    sqlx::query("UPDATE accounts SET status=?2, disabled_until=?3, updated_at=?4 WHERE user_id=?1 AND id=?5").bind(pool.user_id())
         .bind(status)
         .bind(disabled_until)
         .bind(utc_now_string())
         .bind(id)
-        .execute(pool)
+        .execute(pool.raw())
         .await?;
     get(pool, id).await
 }
 
-pub async fn expire_disabled(pool: &SqlitePool) -> Result<u64, AppError> {
-    let result = sqlx::query("UPDATE accounts SET status='active', disabled_until=NULL, updated_at=? WHERE status='disabled' AND disabled_until IS NOT NULL AND disabled_until <= ?")
+pub async fn expire_disabled(pool: &UserDb) -> Result<u64, AppError> {
+    let result = sqlx::query("UPDATE accounts SET status='active', disabled_until=NULL, updated_at=?2 WHERE user_id=?1 AND status='disabled' AND disabled_until IS NOT NULL AND disabled_until <= ?3").bind(pool.user_id())
         .bind(utc_now_string())
         .bind(unix_now_millis())
-        .execute(pool)
+        .execute(pool.raw())
         .await?;
     Ok(result.rows_affected())
 }
-pub async fn mark_used(pool: &SqlitePool, id: &str) -> Result<(), AppError> {
+pub async fn mark_used(pool: &UserDb, id: &str) -> Result<(), AppError> {
     let now = utc_now_string();
-    sqlx::query("UPDATE accounts SET total_requests=total_requests+1,last_used_at=?,updated_at=? WHERE id=?").bind(&now).bind(&now).bind(id).execute(pool).await?;
+    sqlx::query("UPDATE accounts SET total_requests=total_requests+1,last_used_at=?2,updated_at=?3 WHERE user_id=?1 AND id=?4").bind(pool.user_id()).bind(&now).bind(&now).bind(id).execute(pool.raw()).await?;
     Ok(())
 }
-pub async fn add_total_tokens(pool: &SqlitePool, id: &str, tokens: i64) -> Result<(), AppError> {
-    sqlx::query("UPDATE accounts SET total_tokens=total_tokens+? WHERE id=?")
+pub async fn add_total_tokens(pool: &UserDb, id: &str, tokens: i64) -> Result<(), AppError> {
+    sqlx::query("UPDATE accounts SET total_tokens=total_tokens+?2 WHERE user_id=?1 AND id=?3")
+        .bind(pool.user_id())
         .bind(tokens)
         .bind(id)
-        .execute(pool)
+        .execute(pool.raw())
         .await?;
     Ok(())
 }
 pub async fn adjust(
-    pool: &SqlitePool,
+    pool: &UserDb,
     id: &str,
     success: bool,
     kind: &str,
@@ -343,19 +361,19 @@ pub async fn adjust(
     adjust_by(pool, id, delta, code, message).await
 }
 pub async fn adjust_by(
-    pool: &SqlitePool,
+    pool: &UserDb,
     id: &str,
     delta: i64,
     code: Option<&str>,
     message: Option<&str>,
 ) -> Result<(), AppError> {
-    sqlx::query("UPDATE accounts SET priority=MAX(0,MIN(9,priority + ?)),last_error_code=?,last_error_message=?,updated_at=? WHERE id=?")
+    sqlx::query("UPDATE accounts SET priority=MAX(0,MIN(9,priority + ?2)),last_error_code=?3,last_error_message=?4,updated_at=?5 WHERE user_id=?1 AND id=?6").bind(pool.user_id())
         .bind(delta)
         .bind(code)
         .bind(message)
         .bind(utc_now_string())
         .bind(id)
-        .execute(pool)
+        .execute(pool.raw())
         .await?;
     Ok(())
 }
@@ -400,6 +418,7 @@ fn normalize_provider(provider: Option<String>) -> Option<String> {
 }
 
 async fn clear_other_super_priorities(
+    user_id: &str,
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     id: &str,
     account_type: &str,
@@ -407,27 +426,35 @@ async fn clear_other_super_priorities(
 ) -> Result<(), AppError> {
     let provider = provider
         .ok_or_else(|| AppError::BadRequest("请先指定账号供应商，再开启超级优先".into()))?;
-    sqlx::query("UPDATE accounts SET super_priority=0,updated_at=? WHERE type=? AND provider=? AND id<>? AND super_priority<>0")
+    sqlx::query("UPDATE accounts SET super_priority=0,updated_at=?2 WHERE user_id=?1 AND type=?3 AND provider=?4 AND id<>?5 AND super_priority<>0").bind(user_id)
         .bind(utc_now_string()).bind(account_type).bind(provider).bind(id).execute(&mut **tx).await?;
     Ok(())
 }
 
 pub async fn set_super_priority(
-    pool: &SqlitePool,
+    pool: &UserDb,
     id: &str,
     enabled: bool,
 ) -> Result<Account, AppError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let current = sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE id=?")
+    let current = sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE user_id=?1 AND id=?2")
+        .bind(pool.user_id())
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?
         .ok_or_else(|| AppError::NotFound("账号不存在".into()))?;
     if enabled {
-        clear_other_super_priorities(&mut tx, id, &current.r#type, current.provider.as_deref())
-            .await?;
+        clear_other_super_priorities(
+            pool.user_id(),
+            &mut tx,
+            id,
+            &current.r#type,
+            current.provider.as_deref(),
+        )
+        .await?;
     }
-    sqlx::query("UPDATE accounts SET super_priority=?,updated_at=? WHERE id=?")
+    sqlx::query("UPDATE accounts SET super_priority=?2,updated_at=?3 WHERE user_id=?1 AND id=?4")
+        .bind(pool.user_id())
         .bind(enabled)
         .bind(utc_now_string())
         .bind(id)

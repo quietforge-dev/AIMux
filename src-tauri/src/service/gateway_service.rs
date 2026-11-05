@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use crate::database::UserDb;
 use axum::{
     body::{Body, Bytes},
     http::{HeaderMap, StatusCode},
@@ -7,7 +8,6 @@ use axum::{
 };
 use futures_util::{Stream, StreamExt};
 use serde_json::{json, Value};
-use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::{
@@ -22,7 +22,7 @@ use crate::{
 };
 
 pub async fn forward(
-    pool: &SqlitePool,
+    pool: &UserDb,
     settings: &Settings,
     cache_priority: &crate::service::cache_priority_service::SharedCachePriority,
     body: Value,
@@ -601,7 +601,7 @@ async fn pause_before_retry(attempt: i64, max_attempts: i64, trace_id: &str) {
 }
 
 async fn record(
-    pool: &SqlitePool,
+    pool: &UserDb,
     trace_id: &str,
     account: &crate::model::account::Account,
     model: Option<&str>,
@@ -745,7 +745,7 @@ mod first_chunk_tests {
     }
 }
 
-pub async fn models(pool: &SqlitePool, kind: &str) -> Result<Value, AppError> {
+pub async fn models(pool: &UserDb, kind: &str) -> Result<Value, AppError> {
     let items = model_service::list(pool, Some(kind)).await?;
     Ok(
         json!({"object":"list","data":items.into_iter().map(|model|json!({"id":model.name,"object":"model","owned_by":"aimux"})).collect::<Vec<_>>() }),

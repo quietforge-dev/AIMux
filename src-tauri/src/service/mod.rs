@@ -12,3 +12,5 @@ pub mod scheduler_service;
 pub mod settings_service;
 pub mod statistics_service;
 pub mod usage_service;
+
+pub mod auth_service;

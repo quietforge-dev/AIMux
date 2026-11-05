@@ -1,5 +1,5 @@
+use crate::database::UserDb;
 use crate::{dao::model_dao, error::AppError, schema::model_schema::ModelView};
-use sqlx::SqlitePool;
 
 const DEFAULTS: [(&str, &str, &str); 7] = [
     ("openai", "openai", "gpt-6-astra"),
@@ -11,12 +11,12 @@ const DEFAULTS: [(&str, &str, &str); 7] = [
     ("anthropic", "anthropic", "claude-opus-5-5"),
 ];
 
-pub async fn seed(pool: &SqlitePool) -> Result<(), AppError> {
+pub async fn seed(pool: &UserDb) -> Result<(), AppError> {
     model_dao::insert_missing(pool, &DEFAULTS).await?;
     model_dao::ensure_defaults(pool).await
 }
 
-pub async fn list(pool: &SqlitePool, kind: Option<&str>) -> Result<Vec<ModelView>, AppError> {
+pub async fn list(pool: &UserDb, kind: Option<&str>) -> Result<Vec<ModelView>, AppError> {
     Ok(model_dao::list(pool, kind, None)
         .await?
         .into_iter()

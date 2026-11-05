@@ -29,8 +29,10 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import { authApi } from '../../api/auth';
-import { setAuthToken } from '../../api/client';
+import { useAuthStore } from '../../stores/auth';
+import { useRouter } from 'vue-router';
+const auth = useAuthStore();
+const router = useRouter();
 
 const visible = defineModel<boolean>({ required: true });
 const username = ref('');
@@ -44,8 +46,9 @@ const submit = async () => {
   }
   loading.value = true;
   try {
-    const result = await authApi.login(username.value.trim(), password.value);
-    setAuthToken(result.token);
+    await auth.login(username.value.trim(), password.value);
+    if (router.currentRoute.value.meta.requiresAdmin && !auth.isAdmin)
+      await router.replace('/accounts');
     password.value = '';
     visible.value = false;
   } catch (error) {

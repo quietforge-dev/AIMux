@@ -7,16 +7,16 @@
     <el-card class="settings-card">
       <el-form :model="form" label-width="120px" class="settings-form">
         <div class="settings-grid">
-          <el-form-item label="监听地址">
+          <el-form-item v-if="auth.desktop" label="监听地址">
             <el-input v-model="form.host" />
           </el-form-item>
-          <el-form-item label="端口">
+          <el-form-item v-if="auth.desktop" label="端口">
             <el-input-number v-model="form.port" :min="1" :max="65535" />
           </el-form-item>
           <el-form-item label="重试次数">
             <el-input-number v-model="form.request_retry_attempts" :min="1" :max="20" />
           </el-form-item>
-          <el-form-item label="开机自启">
+          <el-form-item v-if="auth.desktop" label="开机自启">
             <el-switch v-model="form.launch_at_login" />
           </el-form-item>
           <el-form-item label="启用上游代理">
@@ -55,15 +55,63 @@
               </el-input>
             </div>
           </el-form-item>
-          <el-form-item label="本地令牌">
-            <el-input v-model="form.local_token" show-password />
+          <el-form-item label="API Token">
+            <el-input
+              :model-value="
+                auth.user?.api_token_prefix ? `${auth.user.api_token_prefix}…` : '未设置'
+              "
+              readonly
+            >
+              <template #append><el-button @click="resetToken">重置</el-button></template>
+            </el-input>
           </el-form-item>
-          <el-form-item label="数据目录">
+          <el-form-item v-if="!auth.desktop" label="登录密码"
+            ><el-button @click="openPassword">修改密码</el-button></el-form-item
+          >
+          <el-form-item v-if="auth.desktop" label="数据目录">
             <el-button @click="openDataDirectory">打开数据目录</el-button>
           </el-form-item>
         </div>
       </el-form>
     </el-card>
+    <TokenDialog v-model="tokenVisible" :token="newToken" @closed="newToken = ''" />
+    <el-dialog
+      v-model="passwordVisible"
+      title="修改登录密码"
+      width="440px"
+      :close-on-click-modal="false"
+    >
+      <el-form label-width="90px" @submit.prevent="changePassword">
+        <el-alert v-if="passwordError" :title="passwordError" type="error" :closable="false" />
+        <el-form-item label="当前密码"
+          ><el-input
+            v-model="currentPassword"
+            type="password"
+            show-password
+            autocomplete="current-password"
+        /></el-form-item>
+        <el-form-item label="新密码"
+          ><el-input
+            v-model="nextPassword"
+            type="password"
+            show-password
+            autocomplete="new-password"
+        /></el-form-item>
+        <el-form-item label="确认密码"
+          ><el-input
+            v-model="confirmPassword"
+            type="password"
+            show-password
+            autocomplete="new-password"
+        /></el-form-item>
+      </el-form>
+      <template #footer
+        ><el-button @click="passwordVisible = false">取消</el-button
+        ><el-button type="primary" :loading="passwordSaving" @click="changePassword"
+          >保存并重新登录</el-button
+        ></template
+      >
+    </el-dialog>
     <el-card class="priority-card">
       <template #header>优先级扣减策略</template>
       <el-form
@@ -218,12 +266,74 @@
 </template>
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import type { FormInstance, FormRules } from 'element-plus';
 import { CopyDocument } from '@element-plus/icons-vue';
 import { settingsApi, type Settings } from '../../api/settings';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart';
+import { authApi } from '../../api/auth';
+import { useAuthStore } from '../../stores/auth';
+import TokenDialog from '../../components/auth/TokenDialog.vue';
+const auth = useAuthStore();
+const tokenVisible = ref(false);
+const newToken = ref('');
+const resetToken = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '重置后旧 API Token 立即失效，请更新所有调用客户端。',
+      '重置 API Token',
+      { type: 'warning' },
+    );
+  } catch {
+    return;
+  }
+  try {
+    const result = await authApi.resetToken();
+    newToken.value = result.token;
+    tokenVisible.value = true;
+    await auth.refresh();
+  } catch (e) {
+    ElMessage.error(String(e));
+  }
+};
+const passwordVisible = ref(false);
+const currentPassword = ref('');
+const nextPassword = ref('');
+const confirmPassword = ref('');
+const passwordError = ref('');
+const passwordSaving = ref(false);
+const openPassword = () => {
+  currentPassword.value = '';
+  nextPassword.value = '';
+  confirmPassword.value = '';
+  passwordError.value = '';
+  passwordVisible.value = true;
+};
+const changePassword = async () => {
+  passwordError.value = '';
+  if (!currentPassword.value || nextPassword.value.length < 8) {
+    passwordError.value = '请输入当前密码及至少 8 位新密码';
+    return;
+  }
+  if (nextPassword.value !== confirmPassword.value) {
+    passwordError.value = '两次新密码不一致';
+    return;
+  }
+  passwordSaving.value = true;
+  try {
+    await authApi.changePassword(currentPassword.value, nextPassword.value);
+    passwordVisible.value = false;
+    currentPassword.value = '';
+    nextPassword.value = '';
+    confirmPassword.value = '';
+    window.dispatchEvent(new CustomEvent('aimux-auth-required'));
+  } catch (e) {
+    passwordError.value = String(e);
+  } finally {
+    passwordSaving.value = false;
+  }
+};
 const form = reactive<Settings>({
   host: '127.0.0.1',
   port: 7789,
@@ -283,7 +393,9 @@ const gatewayHost = computed(() => {
   const host = form.host.trim();
   return !host || host === '0.0.0.0' ? '127.0.0.1' : host;
 });
-const gatewayOrigin = computed(() => `http://${gatewayHost.value}:${form.port}`);
+const gatewayOrigin = computed(() =>
+  auth.desktop ? `http://${gatewayHost.value}:${form.port}` : window.location.origin,
+);
 const openaiAddress = computed(() => `${gatewayOrigin.value}/v1`);
 const anthropicAddress = computed(() => gatewayOrigin.value);
 

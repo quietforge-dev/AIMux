@@ -1,20 +1,20 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query},
     routing::{get, post},
     Json, Router,
 };
 
 use crate::{
-    app_state::AppState,
+    app_state::{AppState, ServerState},
     dao::multiplier_monitor_dao,
     error::AppError,
     schema::multiplier_monitor_schema::{MultiplierMonitorLogQuery, MultiplierMonitorUpdate},
     service::multiplier_monitor_service,
 };
 
-pub fn routes() -> Router<Arc<AppState>> {
+pub fn routes() -> Router<Arc<ServerState>> {
     Router::new()
         .route("/api/multiplier-monitors", get(list))
         .route("/api/multiplier-monitors/{id}", get(get_one).put(update))
@@ -27,14 +27,16 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/api/multiplier-monitors/{id}/logs", get(logs))
 }
 
-async fn list(State(state): State<Arc<AppState>>) -> Result<Json<serde_json::Value>, AppError> {
+async fn list(
+    Extension(state): Extension<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
     Ok(Json(serde_json::json!({
         "items": multiplier_monitor_service::list(&state.pool).await?
     })))
 }
 
 async fn get_one(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     Ok(Json(
@@ -44,7 +46,7 @@ async fn get_one(
 }
 
 async fn update(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Path(id): Path<String>,
     Json(payload): Json<MultiplierMonitorUpdate>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -55,7 +57,7 @@ async fn update(
 }
 
 async fn toggle(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     Ok(Json(
@@ -65,7 +67,7 @@ async fn toggle(
 }
 
 async fn check(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let settings = state.settings.read().await.clone();
@@ -78,7 +80,7 @@ async fn check(
 }
 
 async fn newapi_groups(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let settings = state.settings.read().await.clone();
@@ -88,7 +90,7 @@ async fn newapi_groups(
 }
 
 async fn logs(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Path(id): Path<String>,
     Query(query): Query<MultiplierMonitorLogQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {

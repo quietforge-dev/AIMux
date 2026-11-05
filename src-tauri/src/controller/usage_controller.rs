@@ -1,6 +1,10 @@
-use crate::{app_state::AppState, error::AppError, service::usage_service};
+use crate::{
+    app_state::{AppState, ServerState},
+    error::AppError,
+    service::usage_service,
+};
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query},
     routing::{delete, get},
     Json, Router,
 };
@@ -23,14 +27,14 @@ struct Q {
 struct CleanupQuery {
     days: Option<i64>,
 }
-pub fn routes() -> Router<Arc<AppState>> {
+pub fn routes() -> Router<Arc<ServerState>> {
     Router::new()
         .route("/api/usage/records", get(list))
         .route("/api/usage/records/{id}", get(detail))
         .route("/api/usage/records/expired", delete(cleanup))
 }
 async fn list(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Query(q): Query<Q>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     Ok(Json(
@@ -53,7 +57,7 @@ async fn list(
     ))
 }
 async fn detail(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let row = usage_service::detail(&s.pool, &id)
@@ -62,7 +66,7 @@ async fn detail(
     Ok(Json(serde_json::to_value(row).unwrap()))
 }
 async fn cleanup(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Query(q): Query<CleanupQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     Ok(Json(

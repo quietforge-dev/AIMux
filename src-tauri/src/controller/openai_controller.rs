@@ -1,13 +1,17 @@
-use crate::{app_state::AppState, error::AppError, service::gateway_service};
+use crate::{
+    app_state::{AppState, ServerState},
+    error::AppError,
+    service::gateway_service,
+};
 use axum::{
-    extract::{Path, State},
+    extract::{Extension, Path},
     http::HeaderMap,
     response::Response,
     routing::{get, post},
     Json, Router,
 };
 use std::sync::Arc;
-pub fn routes() -> Router<Arc<AppState>> {
+pub fn routes() -> Router<Arc<ServerState>> {
     Router::new()
         .route("/v1/chat/completions", post(chat))
         .route("/v1/completions", post(completions))
@@ -23,7 +27,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/models/{id}", get(model))
 }
 async fn forward(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     headers: HeaderMap,
     endpoint: &str,
     body: serde_json::Value,
@@ -43,11 +47,11 @@ async fn forward(
 macro_rules! endpoint {
     ($name:ident,$path:literal) => {
         async fn $name(
-            State(s): State<Arc<AppState>>,
+            Extension(s): Extension<Arc<AppState>>,
             headers: HeaderMap,
             body: axum::extract::Json<serde_json::Value>,
         ) -> Result<Response, AppError> {
-            forward(State(s), headers, $path, body.0).await
+            forward(Extension(s), headers, $path, body.0).await
         }
     };
 }
@@ -59,11 +63,13 @@ endpoint!(moderations, "/v1/moderations");
 endpoint!(images, "/v1/images/generations");
 endpoint!(speech, "/v1/audio/speech");
 endpoint!(rerank, "/v1/rerank");
-async fn models(State(s): State<Arc<AppState>>) -> Result<Json<serde_json::Value>, AppError> {
+async fn models(
+    Extension(s): Extension<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
     Ok(Json(gateway_service::models(&s.pool, "openai").await?))
 }
 async fn model(
-    State(s): State<Arc<AppState>>,
+    Extension(s): Extension<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let all = gateway_service::models(&s.pool, "openai").await?;
