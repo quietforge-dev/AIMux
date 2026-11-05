@@ -17,6 +17,18 @@
         <el-option label="Anthropic" value="anthropic" />
       </el-select>
     </el-form-item>
+    <el-form-item label="推理强度">
+      <el-select v-model="filters.reasoning_effort" class="select-filter" aria-label="推理强度筛选">
+        <el-option label="非空（有推理强度）" value="__nonempty__" />
+        <el-option label="全部" value="" />
+        <el-option
+          v-for="effort in reasoningEfforts"
+          :key="effort"
+          :label="effort"
+          :value="effort"
+        />
+      </el-select>
+    </el-form-item>
     <el-form-item>
       <el-select v-model="filters.success" class="select-filter" placeholder="全部结果" clearable>
         <el-option label="成功" :value="true" />
@@ -51,6 +63,8 @@
 
 <script setup lang="ts">
 import type { UsageFilterState } from '../../api/usage';
+
+const reasoningEfforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 const filters = defineModel<UsageFilterState>({ required: true });
 const emit = defineEmits<{ query: [] }>();

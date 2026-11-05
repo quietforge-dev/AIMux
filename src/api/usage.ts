@@ -28,6 +28,7 @@ export type UsageFilterState = {
   account_id: string;
   model: string;
   kind: string;
+  reasoning_effort: string;
   success: boolean | undefined;
   started_after: string;
   started_before: string;

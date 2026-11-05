@@ -12,6 +12,7 @@ struct Q {
     pub limit: Option<i64>,
     pub account_id: Option<String>,
     pub model: Option<String>,
+    pub reasoning_effort: Option<String>,
     #[serde(rename = "type")]
     pub kind: Option<String>,
     pub success: Option<bool>,
@@ -44,6 +45,7 @@ async fn list(
                 q.success,
                 q.started_after.as_deref(),
                 q.started_before.as_deref(),
+                q.reasoning_effort.as_deref(),
             )
             .await?,
         )

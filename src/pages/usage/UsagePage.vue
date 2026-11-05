@@ -189,6 +189,7 @@ const filters = reactive<UsageFilterState>({
   account_id: '',
   model: '',
   kind: '',
+  reasoning_effort: '__nonempty__',
   success: undefined as boolean | undefined,
   started_after: '',
   started_before: '',
@@ -239,6 +240,7 @@ const query = () => {
   if (filters.account_id.trim()) params.set('account_id', filters.account_id.trim());
   if (filters.model.trim()) params.set('model', filters.model.trim());
   if (filters.kind) params.set('type', filters.kind);
+  if (filters.reasoning_effort) params.set('reasoning_effort', filters.reasoning_effort);
   if (filters.success !== undefined) params.set('success', String(filters.success));
   const startedAfter = dayBoundary(filters.started_after, false);
   const startedBefore = dayBoundary(filters.started_before, true);
@@ -274,6 +276,7 @@ const reset = () => {
   filters.account_id = '';
   filters.model = '';
   filters.kind = '';
+  filters.reasoning_effort = '__nonempty__';
   filters.success = undefined;
   filters.started_after = '';
   filters.started_before = '';

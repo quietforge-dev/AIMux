@@ -49,6 +49,7 @@ struct UsageFilter<'a> {
     success: Option<bool>,
     started_after: Option<&'a str>,
     started_before: Option<&'a str>,
+    reasoning_effort: Option<&'a str>,
 }
 
 impl<'a> UsageFilter<'a> {
@@ -62,6 +63,14 @@ impl<'a> UsageFilter<'a> {
         if let Some(value) = self.model {
             where_sql.push_str(" AND model=?");
             values.push(value.into());
+        }
+        if let Some(value) = self.reasoning_effort {
+            if value == "__nonempty__" {
+                where_sql.push_str(" AND reasoning_effort IS NOT NULL AND TRIM(reasoning_effort, char(9) || char(10) || char(13) || ' ') <> ''");
+            } else {
+                where_sql.push_str(" AND reasoning_effort=?");
+                values.push(value.into());
+            }
         }
         if let Some(value) = self.kind {
             where_sql.push_str(" AND account_type=?");
@@ -134,6 +143,7 @@ pub async fn list(
     success: Option<bool>,
     started_after: Option<&str>,
     started_before: Option<&str>,
+    reasoning_effort: Option<&str>,
 ) -> Result<(Vec<UsageRecord>, i64), AppError> {
     let filter = UsageFilter {
         account_id,
@@ -142,6 +152,7 @@ pub async fn list(
         success,
         started_after,
         started_before,
+        reasoning_effort,
     };
     let (where_sql, values) = filter.where_clause();
     let q = format!(
@@ -176,6 +187,7 @@ pub async fn summary(
     success: Option<bool>,
     started_after: Option<&str>,
     started_before: Option<&str>,
+    reasoning_effort: Option<&str>,
 ) -> Result<(i64, i64, f64, i64), AppError> {
     let filter = UsageFilter {
         account_id,
@@ -184,10 +196,11 @@ pub async fn summary(
         success,
         started_after,
         started_before,
+        reasoning_effort,
     };
     let (where_sql, values) = filter.where_clause();
     let sql = format!(
-        "SELECT COUNT(*),COALESCE(SUM(success),0),COALESCE(AVG(duration_ms),0),COALESCE(SUM(total_tokens),0) FROM usage_records{}",
+        "SELECT COUNT(*),COALESCE(SUM(success),0),COALESCE(AVG(duration_ms),0.0),COALESCE(SUM(total_tokens),0) FROM usage_records{}",
         where_sql
     );
     let mut query = sqlx::query_as::<_, (i64, i64, f64, i64)>(&sql);
