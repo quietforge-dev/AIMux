@@ -15,6 +15,7 @@ vite.config.d.ts
 *.db
 *.log
 src-tauri/keys/
+scripts/deploy_linux.py
 .workbuddy/
 .venv/
 aimux.egg-info/

@@ -1,5 +1,6 @@
 pub mod account_controller;
 pub mod anthropic_controller;
+pub mod auth_controller;
 pub mod middleware;
 pub mod model_controller;
 pub mod monitor_controller;
@@ -16,7 +17,10 @@ use std::{
 
 use axum::{extract::DefaultBodyLimit, middleware::from_fn_with_state, routing::get, Router};
 use tokio::net::TcpListener;
-use tower_http::cors::CorsLayer;
+use tower_http::{
+    cors::CorsLayer,
+    services::{ServeDir, ServeFile},
+};
 
 use crate::{app_state::AppState, error::AppError};
 
@@ -34,6 +38,7 @@ pub async fn serve(state: Arc<AppState>) -> Result<(), AppError> {
         .merge(monitor_controller::routes())
         .merge(multiplier_monitor_controller::routes())
         .merge(settings_controller::routes())
+        .merge(auth_controller::routes())
         .route(
             "/health",
             get(|| async { axum::Json(serde_json::json!({"status":"ok"})) }),
@@ -41,6 +46,10 @@ pub async fn serve(state: Arc<AppState>) -> Result<(), AppError> {
         .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         .layer(from_fn_with_state(Arc::clone(&state), middleware::auth))
         .layer(CorsLayer::permissive());
+    let web_root = std::env::var("AIMUX_WEB_ROOT").unwrap_or_else(|_| "dist".into());
+    let index = format!("{web_root}/index.html");
+    let app =
+        app.fallback_service(ServeDir::new(web_root).not_found_service(ServeFile::new(index)));
     let addr: SocketAddr = format!("{}:{}", settings.host, settings.port)
         .parse::<SocketAddr>()
         .map_err(|error: AddrParseError| AppError::Internal(error.to_string()))?;

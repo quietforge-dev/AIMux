@@ -2,6 +2,7 @@
 
 mod app_state;
 pub mod background;
+#[cfg(feature = "desktop")]
 mod commands;
 pub mod config;
 mod controller;
@@ -20,23 +21,24 @@ use std::sync::Arc;
 
 use app_state::AppState;
 use config::Settings;
+#[cfg(feature = "desktop")]
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
     Manager, WindowEvent,
 };
 
-#[cfg(not(debug_assertions))]
+#[cfg(all(feature = "desktop", not(debug_assertions)))]
 const STABLE_GATEWAY_PORT: u16 = 7789;
-#[cfg(not(debug_assertions))]
+#[cfg(all(feature = "desktop", not(debug_assertions)))]
 const DEVELOPMENT_DESKTOP_PORT: u16 = 7790;
 
-#[cfg(debug_assertions)]
+#[cfg(all(feature = "desktop", debug_assertions))]
 fn load_runtime_settings() -> Settings {
     Settings::load().unwrap_or_default()
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(all(feature = "desktop", not(debug_assertions)))]
 fn load_runtime_settings() -> Settings {
     let mut settings = Settings::load().unwrap_or_default();
     if settings.port == DEVELOPMENT_DESKTOP_PORT {
@@ -50,6 +52,7 @@ fn load_runtime_settings() -> Settings {
     settings
 }
 
+#[cfg(feature = "desktop")]
 pub fn run() {
     logging::init();
     let settings = load_runtime_settings();

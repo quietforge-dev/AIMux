@@ -1,4 +1,13 @@
-let base = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:7789';
+let base = import.meta.env.VITE_API_BASE || window.location.origin;
+let authToken: string | undefined;
+
+export const setAuthToken = (value: string) => {
+  authToken = value.trim() || undefined;
+};
+
+export const clearAuthToken = () => {
+  authToken = undefined;
+};
 
 export const setApiBase = (value: string) => {
   const normalized = value.trim().replace(/\/+$/, '');
@@ -6,10 +15,17 @@ export const setApiBase = (value: string) => {
 };
 
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  headers.set('Content-Type', 'application/json');
+  if (authToken) headers.set('Authorization', `Bearer ${authToken}`);
   const response = await fetch(`${base}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
+    headers,
     ...init,
   });
+  if (response.status === 401 && path !== '/api/auth/login') {
+    clearAuthToken();
+    window.dispatchEvent(new CustomEvent('aimux-auth-required'));
+  }
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `${response.status} ${response.statusText}`);

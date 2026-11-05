@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use sqlx::SqlitePool;
 
@@ -14,6 +14,7 @@ pub struct AppState {
     pub pool: SqlitePool,
     pub settings: SharedSettings,
     pub cache_priority: crate::service::cache_priority_service::SharedCachePriority,
+    pub web_sessions: Arc<tokio::sync::RwLock<HashSet<String>>>,
 }
 
 impl AppState {
@@ -35,6 +36,7 @@ impl AppState {
                 crate::service::cache_priority_service::CachePriorityTracker::new(&settings),
             )),
             settings: Arc::new(tokio::sync::RwLock::new(settings)),
+            web_sessions: Arc::new(tokio::sync::RwLock::new(HashSet::new())),
         })
     }
 }

@@ -148,10 +148,18 @@ impl Settings {
     }
 
     fn apply_environment_overrides(&mut self) {
+        if let Ok(host) = std::env::var("AIMUX_HOST") {
+            if !host.trim().is_empty() {
+                self.host = host;
+            }
+        }
         if let Ok(port) = std::env::var("AIMUX_PORT") {
             if let Ok(port) = port.parse::<u16>() {
                 self.port = port;
             }
+        }
+        if let Ok(token) = std::env::var("AIMUX_LOCAL_TOKEN") {
+            self.local_token = token;
         }
         if let Ok(enabled) = std::env::var("AIMUX_MONITORING_ENABLED") {
             let normalized = enabled.trim().to_ascii_lowercase();
