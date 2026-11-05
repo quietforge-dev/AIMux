@@ -1,12 +1,28 @@
 let base = import.meta.env.VITE_API_BASE || window.location.origin;
-let authToken: string | undefined;
+const AUTH_TOKEN_STORAGE_KEY = 'aimux-session-token';
+
+const readAuthToken = (): string | undefined => {
+  try {
+    return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY)?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+let authToken = readAuthToken();
 
 export const setAuthToken = (value: string) => {
   authToken = value.trim() || undefined;
+  try {
+    if (authToken) window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, authToken);
+    else window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+  } catch {
+    // 禁用浏览器存储时，当前页面仍可使用内存中的会话。
+  }
 };
 
 export const clearAuthToken = () => {
-  authToken = undefined;
+  setAuthToken('');
 };
 
 export const setApiBase = (value: string) => {
