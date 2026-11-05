@@ -11,6 +11,7 @@ export type Settings = {
   low_cache_priority_enabled: boolean;
   low_cache_consecutive: number;
   low_cache_threshold_percent: number;
+  low_cache_min_input_tokens: number;
   low_cache_priority_penalty: number;
   slow_first_token_enabled: boolean;
   slow_first_token_consecutive: number;

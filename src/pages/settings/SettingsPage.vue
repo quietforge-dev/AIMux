@@ -132,6 +132,16 @@
               :disabled="!form.low_cache_priority_enabled"
             />
           </el-form-item>
+          <el-form-item label="低缓存策略最小输入 Token" prop="low_cache_min_input_tokens">
+            <el-input-number
+              v-model="form.low_cache_min_input_tokens"
+              :min="0"
+              :max="1000000000"
+              :precision="0"
+              step-strictly
+              :disabled="!form.low_cache_priority_enabled"
+            />
+          </el-form-item>
           <el-form-item label="缓存率低于（%）" prop="low_cache_threshold_percent">
             <el-input-number
               v-model="form.low_cache_threshold_percent"
@@ -155,6 +165,9 @@
         </div>
         <p class="priority-help">
           仅统计实际网关请求，按账号累计，流式请求结束后计算一次。有效低缓存请求不增加优先级，连续达到次数后扣减并清零。
+          总输入
+          Token（含缓存部分）低于门槛的成功请求跳过缓存策略，不累加、不清零、不加分；首字慢策略仍独立计算。设为
+          0 关闭门槛过滤。
           缓存达标、请求失败或缓存数据缺失/异常会清零；成功且缓存达标或无法评估时仍按原规则加分。
           计数仅保存在当前进程内存中，重启或修改缓存策略后清零；账号测试和定时监控不参与统计。
         </p>
@@ -223,6 +236,7 @@ const form = reactive<Settings>({
   low_cache_priority_enabled: false,
   low_cache_consecutive: 5,
   low_cache_threshold_percent: 85,
+  low_cache_min_input_tokens: 2048,
   low_cache_priority_penalty: 3,
   slow_first_token_enabled: false,
   slow_first_token_consecutive: 5,
@@ -258,6 +272,9 @@ const priorityRules: FormRules<Settings> = {
   slow_first_token_consecutive: [{ ...penaltyRule, max: 1000, message: '请输入 1 到 1000 的整数' }],
   slow_first_token_threshold_seconds: [
     { ...penaltyRule, max: 86400, message: '请输入 1 到 86400 的整数' },
+  ],
+  low_cache_min_input_tokens: [
+    { ...penaltyRule, min: 0, max: 1000000000, message: '请输入 0 到 1000000000 的整数' },
   ],
   low_cache_consecutive: [{ ...penaltyRule, max: 1000, message: '请输入 1 到 1000 的整数' }],
   low_cache_threshold_percent: [{ ...penaltyRule, max: 100, message: '请输入 1 到 100 的整数' }],

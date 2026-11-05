@@ -6,15 +6,47 @@ use tokio::sync::Mutex;
 use crate::{config::Settings, dao::account_dao, error::AppError};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct Policy(bool, u32, u8, u8);
+struct Policy(bool, u32, u8, u8, i64);
+
+/// Shared decision for all successful gateway requests, including streaming ones.
+/// Add future exclusions here; counting and priority writes consume only this result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CacheEvaluation {
+    Skip(CacheSkipReason),
+    LowCache,
+    Reset,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CacheSkipReason {
+    InputBelowMinimum,
+}
 
 impl Policy {
+    fn evaluate(&self, input: Option<i64>, cached: Option<i64>) -> CacheEvaluation {
+        if input.is_some_and(|input| input >= 0 && input < self.4) {
+            return CacheEvaluation::Skip(CacheSkipReason::InputBelowMinimum);
+        }
+        match (input, cached) {
+            (Some(input), Some(cached))
+                if input > 0
+                    && cached >= 0
+                    && cached <= input
+                    && i128::from(cached) * 100 < i128::from(input) * i128::from(self.2) =>
+            {
+                CacheEvaluation::LowCache
+            }
+            _ => CacheEvaluation::Reset,
+        }
+    }
+
     fn from_settings(settings: &Settings) -> Self {
         Self(
             settings.low_cache_priority_enabled,
             settings.low_cache_consecutive,
             settings.low_cache_threshold_percent,
             settings.low_cache_priority_penalty,
+            settings.low_cache_min_input_tokens,
         )
     }
 }
@@ -26,8 +58,42 @@ mod tests {
     fn settings() -> Settings {
         Settings {
             low_cache_priority_enabled: true,
+            low_cache_min_input_tokens: 0,
             ..Settings::default()
         }
+    }
+
+    #[test]
+    fn cache_evaluation_distinguishes_exclusions_low_cache_and_reset() {
+        let policy = Policy::from_settings(&Settings {
+            low_cache_min_input_tokens: 2048,
+            ..settings()
+        });
+        for (input, cached, expected) in [
+            (
+                Some(13),
+                Some(0),
+                CacheEvaluation::Skip(CacheSkipReason::InputBelowMinimum),
+            ),
+            (
+                Some(2047),
+                None,
+                CacheEvaluation::Skip(CacheSkipReason::InputBelowMinimum),
+            ),
+            (Some(2048), Some(0), CacheEvaluation::LowCache),
+            (Some(4000), Some(3400), CacheEvaluation::Reset),
+            (None, None, CacheEvaluation::Reset),
+            (Some(2048), None, CacheEvaluation::Reset),
+            (Some(2048), Some(2049), CacheEvaluation::Reset),
+            (Some(-1), Some(0), CacheEvaluation::Reset),
+        ] {
+            assert_eq!(policy.evaluate(input, cached), expected);
+        }
+        let no_minimum = Policy::from_settings(&settings());
+        assert_eq!(
+            no_minimum.evaluate(Some(13), Some(0)),
+            CacheEvaluation::LowCache
+        );
     }
 
     async fn pool() -> SqlitePool {
@@ -50,6 +116,75 @@ mod tests {
             .fetch_one(pool)
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn short_inputs_preserve_cache_streak_without_bonus_and_boundary_counts() {
+        let pool = pool().await;
+        let settings = Settings {
+            low_cache_min_input_tokens: 2048,
+            low_cache_consecutive: 2,
+            ..settings()
+        };
+        let mut tracker = CachePriorityTracker::new(&settings);
+        for (input, cached, expected_count, expected_priority) in [
+            (2048, 0, 1, 9),
+            (13, 0, 1, 9),
+            (15, 0, 1, 9),
+            (2047, 2047, 1, 9),
+            (2048, 0, 0, 6),
+            (0, 0, 0, 6),
+            (2048, 2048, 0, 7),
+        ] {
+            let ticket = tracker.begin("a", &settings).unwrap();
+            tracker
+                .success(&pool, "a", Some(&ticket), Some(input), Some(cached))
+                .await
+                .unwrap();
+            assert_eq!(tracker.accounts["a"].count, expected_count);
+            assert_eq!(priority(&pool).await, expected_priority);
+        }
+    }
+
+    #[tokio::test]
+    async fn short_inputs_still_apply_slow_policy_and_threshold_changes_invalidate_cache_only() {
+        let pool = pool().await;
+        let mut settings = Settings {
+            low_cache_min_input_tokens: 2048,
+            slow_first_token_enabled: true,
+            slow_first_token_consecutive: 2,
+            ..settings()
+        };
+        let mut tracker = CachePriorityTracker::new(&settings);
+        let old_ticket = tracker.begin("a", &settings).unwrap();
+        tracker
+            .finish_success(
+                &pool,
+                "a",
+                Some(&old_ticket),
+                Some(2048),
+                Some(0),
+                Some(11000),
+            )
+            .await
+            .unwrap();
+        settings.low_cache_min_input_tokens = 4096;
+        tracker.configure(&settings);
+        assert_eq!(tracker.accounts["a"].count, 0);
+        assert_eq!(tracker.accounts["a"].slow_count, 1);
+        let ticket = tracker.begin("a", &settings).unwrap();
+        tracker
+            .finish_success(&pool, "a", Some(&ticket), Some(13), Some(0), Some(11000))
+            .await
+            .unwrap();
+        assert_eq!(priority(&pool).await, 7);
+        assert_eq!(tracker.accounts["a"].count, 0);
+        assert_eq!(tracker.accounts["a"].slow_count, 0);
+        tracker
+            .finish_success(&pool, "a", Some(&old_ticket), Some(2048), Some(0), Some(0))
+            .await
+            .unwrap();
+        assert_eq!(tracker.accounts["a"].count, 0);
     }
 
     #[tokio::test]
@@ -604,14 +739,21 @@ impl CachePriorityTracker {
         };
         let cache_active = ticket.cache_epoch == Some(cache_epoch);
         let slow_active = ticket.slow_epoch == Some(slow_epoch);
-        let low_cache = cache_active
-            && matches!((input, cached), (Some(input), Some(cached))
-            if input > 0 && cached >= 0 && cached <= input
-                && i128::from(cached) * 100 < i128::from(input) * i128::from(policy.2));
+        let cache_evaluation = if cache_active {
+            policy.evaluate(input, cached)
+        } else {
+            CacheEvaluation::Reset
+        };
+        let cache_skipped = matches!(cache_evaluation, CacheEvaluation::Skip(_));
+        let low_cache = cache_evaluation == CacheEvaluation::LowCache;
         let slow = slow_active
             && first_token_ms
                 .is_some_and(|ms| ms >= 0 && i128::from(ms) > i128::from(slow_policy.2) * 1000);
-        let next_cache = if low_cache { counter.count + 1 } else { 0 };
+        let next_cache = match cache_evaluation {
+            CacheEvaluation::Skip(_) => counter.count,
+            CacheEvaluation::LowCache => counter.count + 1,
+            CacheEvaluation::Reset => 0,
+        };
         let next_slow = if slow { counter.slow_count + 1 } else { 0 };
         let cache_trigger = low_cache && next_cache >= policy.1;
         let slow_trigger = slow && next_slow >= slow_policy.1;
@@ -626,7 +768,7 @@ impl CachePriorityTracker {
         };
         let delta = if penalty > 0 {
             -penalty
-        } else if low_cache || slow {
+        } else if cache_skipped || low_cache || slow {
             0
         } else {
             1

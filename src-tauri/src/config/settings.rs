@@ -23,6 +23,8 @@ pub struct Settings {
     pub low_cache_consecutive: u32,
     #[serde(default = "default_low_cache_threshold")]
     pub low_cache_threshold_percent: u8,
+    #[serde(default = "default_low_cache_min_input_tokens")]
+    pub low_cache_min_input_tokens: i64,
     #[serde(default = "default_low_cache_penalty")]
     pub low_cache_priority_penalty: u8,
     #[serde(default)]
@@ -64,6 +66,7 @@ impl Default for Settings {
             low_cache_priority_enabled: false,
             low_cache_consecutive: default_low_cache_consecutive(),
             low_cache_threshold_percent: default_low_cache_threshold(),
+            low_cache_min_input_tokens: default_low_cache_min_input_tokens(),
             low_cache_priority_penalty: default_low_cache_penalty(),
             slow_first_token_enabled: false,
             slow_first_token_consecutive: default_low_cache_consecutive(),
@@ -94,6 +97,9 @@ fn default_low_cache_consecutive() -> u32 {
 }
 fn default_low_cache_threshold() -> u8 {
     85
+}
+fn default_low_cache_min_input_tokens() -> i64 {
+    2048
 }
 fn default_low_cache_penalty() -> u8 {
     3
@@ -191,6 +197,7 @@ mod tests {
         object.remove("low_cache_priority_enabled");
         object.remove("low_cache_consecutive");
         object.remove("low_cache_threshold_percent");
+        object.remove("low_cache_min_input_tokens");
         object.remove("low_cache_priority_penalty");
         object.remove("slow_first_token_enabled");
         object.remove("slow_first_token_consecutive");
@@ -206,6 +213,7 @@ mod tests {
         assert!(!loaded.low_cache_priority_enabled);
         assert_eq!(loaded.low_cache_consecutive, 5);
         assert_eq!(loaded.low_cache_threshold_percent, 85);
+        assert_eq!(loaded.low_cache_min_input_tokens, 2048);
         assert_eq!(loaded.low_cache_priority_penalty, 3);
         assert!(!loaded.slow_first_token_enabled);
         assert_eq!(loaded.slow_first_token_consecutive, 5);

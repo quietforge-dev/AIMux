@@ -25,6 +25,9 @@ pub fn validate(settings: &Settings) -> Result<(), String> {
     if !(1..=86400).contains(&settings.slow_first_token_threshold_seconds) {
         return Err("首字慢阈值必须为 1 到 86400 秒".into());
     }
+    if !(0..=1_000_000_000).contains(&settings.low_cache_min_input_tokens) {
+        return Err("低缓存策略最小输入 Token 必须为 0 到 1000000000".into());
+    }
     if !(1..=100).contains(&settings.low_cache_threshold_percent) {
         return Err("缓存率阈值必须为 1 到 100%".into());
     }
@@ -142,6 +145,20 @@ mod tests {
                 }
                 assert_eq!(validate(&settings).is_ok(), (1..=3).contains(&value));
             }
+        }
+    }
+
+    #[test]
+    fn validates_low_cache_min_input_tokens() {
+        for value in [-1, 0, 2048, 1_000_000_000, 1_000_000_001] {
+            let settings = Settings {
+                low_cache_min_input_tokens: value,
+                ..Settings::default()
+            };
+            assert_eq!(
+                validate(&settings).is_ok(),
+                (0..=1_000_000_000).contains(&value)
+            );
         }
     }
 
