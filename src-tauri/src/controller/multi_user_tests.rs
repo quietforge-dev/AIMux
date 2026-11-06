@@ -822,3 +822,75 @@ async fn browser_fixture() {
     let fixture = ServerState::testing(s.pool.clone(), settings, false);
     serve(fixture).await.unwrap();
 }
+
+#[tokio::test]
+async fn responses_preserves_split_terminal_event_and_rejects_truncated_eof() {
+    use axum::{response::IntoResponse, routing::post};
+    async fn upstream(Json(body): Json<Value>) -> axum::response::Response {
+        let truncated = body["input"] == "truncated";
+        let stream = async_stream::stream! {
+            yield Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
+                b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}}"
+            ));
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            if !truncated {
+                yield Ok(axum::body::Bytes::from_static(b"\n\n"));
+            }
+        };
+        (
+            [("content-type", "text/event-stream")],
+            Body::from_stream(stream),
+        )
+            .into_response()
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let upstream_task = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route("/v1/responses", post(upstream)),
+        )
+        .await
+        .unwrap();
+    });
+    let s = setup().await;
+    let owner = user_dao::get(&s.pool, "local").await.unwrap();
+    let state = s.user_state(&owner).await.unwrap();
+    account_dao::create(&state.pool, serde_json::from_value(json!({
+        "name":"fixture", "type":"openai", "base_url":format!("{origin}/v1"), "api_key":"fake-key"
+    })).unwrap()).await.unwrap();
+    for input in ["complete", "truncated"] {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/v1/responses")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer legacy-token")
+            .body(Body::from(
+                json!({"model":"same-model","input":input,"stream":true}).to_string(),
+            ))
+            .unwrap();
+        let response = router(s.clone()).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await;
+        if input == "complete" {
+            assert!(body.unwrap().ends_with(b"\n\n"));
+        } else {
+            assert!(
+                body.is_err(),
+                "truncated upstream must not become clean EOF"
+            );
+        }
+    }
+    let (rows, _) = usage_dao::list(&state.pool, 0, 20, None, None, None, None, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows.iter().filter(|r| r.success).count(), 1);
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r.error_code.as_deref() == Some("stream_read_error"))
+            .count(),
+        1
+    );
+    upstream_task.abort();
+}
