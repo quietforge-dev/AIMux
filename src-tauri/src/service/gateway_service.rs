@@ -334,7 +334,7 @@ pub async fn forward(
                     stream_error = Some("下游客户端已断开或读取超时".to_owned());
                 }
                 if stream_error.is_none() {
-                    if let Some(outcome) = dto::stream_outcome(&captured) {
+                    if let Some(outcome) = dto::framed_stream_outcome(&captured) {
                         if outcome {
                             stream_complete = true;
                         } else {
@@ -354,8 +354,10 @@ pub async fn forward(
                                 stream_error = Some("下游客户端已断开或读取超时".to_owned());
                                 break;
                             }
-                            if let Some(outcome) = dto::stream_outcome(&captured) {
-                                if !outcome {
+                            if let Some(outcome) = dto::framed_stream_outcome(&captured) {
+                                if outcome {
+                                    stream_complete = true;
+                                } else {
                                     stream_error = Some(dto::stream_failure_message(&captured));
                                 }
                                 break;
@@ -377,6 +379,11 @@ pub async fn forward(
                             break;
                         }
                     }
+                }
+                if stream_error.is_none() && !stream_complete {
+                    let message = "上游流在完整结束事件到达前关闭".to_owned();
+                    stream_error = Some(message.clone());
+                    let _ = tx.try_send(Err(std::io::Error::other(message)));
                 }
                 let tokens = dto::usage_from_sse(&captured);
                 let success = stream_error.is_none();
@@ -715,6 +722,89 @@ where
 #[cfg(test)]
 mod first_chunk_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn responses_preserves_split_terminal_event_and_rejects_truncated_eof() {
+        use axum::{body::to_bytes, response::IntoResponse, routing::post, Json, Router};
+        async fn upstream(Json(body): Json<Value>) -> axum::response::Response {
+            let truncated = body["input"] == "truncated";
+            let stream = async_stream::stream! {
+                yield Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
+                    b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}}"
+                ));
+                tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                if !truncated {
+                    yield Ok(axum::body::Bytes::from_static(b"\n\n"));
+                }
+            };
+            (
+                [("content-type", "text/event-stream")],
+                Body::from_stream(stream),
+            )
+                .into_response()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let upstream_task = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/v1/responses", post(upstream)),
+            )
+            .await
+            .unwrap();
+        });
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let settings = Settings {
+            upstream_proxy_enabled: false,
+            ..Settings::default()
+        };
+        let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
+            crate::service::cache_priority_service::CachePriorityTracker::new(&settings),
+        ));
+        account_dao::create(&pool, serde_json::from_value(json!({
+            "name":"fixture", "type":"openai", "base_url":format!("{origin}/v1"), "api_key":"fake-key"
+        })).unwrap()).await.unwrap();
+        for input in ["complete", "truncated"] {
+            let response = forward(
+                &pool,
+                &settings,
+                &cache,
+                json!({"model":"same-model","input":input,"stream":true}),
+                "/v1/responses",
+                "openai",
+                HeaderMap::new(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = to_bytes(response.into_body(), usize::MAX).await;
+            if input == "complete" {
+                assert!(body.unwrap().ends_with(b"\n\n"));
+            } else {
+                assert!(
+                    body.is_err(),
+                    "truncated upstream must not become clean EOF"
+                );
+            }
+        }
+        let (rows, _) = usage_dao::list(&pool, 0, 20, None, None, None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.iter().filter(|r| r.success).count(), 1);
+        assert_eq!(
+            rows.iter()
+                .filter(|r| r.error_code.as_deref() == Some("stream_read_error"))
+                .count(),
+            1
+        );
+        upstream_task.abort();
+    }
 
     #[tokio::test]
     async fn expired_request_deadline_rejects_an_already_available_chunk() {

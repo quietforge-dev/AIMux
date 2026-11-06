@@ -114,6 +114,14 @@ pub fn usage_from_sse(bytes: &[u8]) -> (Option<i64>, Option<i64>, Option<i64>, O
     with_estimated_total(result)
 }
 
+pub fn framed_stream_outcome(bytes: &[u8]) -> Option<bool> {
+    // Transport chunks can stop after the JSON but before the SSE blank line.
+    // Only complete events may terminate forwarding to a downstream SSE parser.
+    let text = String::from_utf8_lossy(bytes).replace("\r\n", "\n");
+    let end = text.rfind("\n\n")?;
+    stream_outcome(text[..end + 2].as_bytes())
+}
+
 pub fn stream_outcome(bytes: &[u8]) -> Option<bool> {
     let text = String::from_utf8_lossy(bytes);
     let mut event_name = None;
@@ -208,6 +216,25 @@ fn merge_usage(
 #[cfg(test)]
 mod stream_tests {
     use super::*;
+
+    #[test]
+    fn completion_requires_the_entire_sse_event() {
+        for response in [
+            "event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n",
+            "event: response.completed\r\ndata: {\"type\":\"response.completed\"}\r\n\r\n",
+        ] {
+            for end in 0..response.len() {
+                assert_eq!(framed_stream_outcome(&response.as_bytes()[..end]), None);
+            }
+            assert_eq!(framed_stream_outcome(response.as_bytes()), Some(true));
+        }
+        assert_eq!(
+            framed_stream_outcome(
+                b"data: {\"type\":\"response.created\"}\n\ndata: {\"type\":\"response.completed\"}"
+            ),
+            None
+        );
+    }
 
     #[test]
     fn preserves_failure_reason_even_after_http_success() {
