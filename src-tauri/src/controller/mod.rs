@@ -73,13 +73,46 @@ async fn serve_listener<F>(listener: TcpListener, app: Router, shutdown: F) -> R
 where
     F: std::future::Future<Output = ()> + Send + 'static,
 {
-    let server = axum::serve(listener, app).with_graceful_shutdown(shutdown);
-    match tokio::time::timeout(GRACEFUL_SHUTDOWN_TIMEOUT, server).await {
+    serve_listener_with_timeout(listener, app, shutdown, GRACEFUL_SHUTDOWN_TIMEOUT).await
+}
+
+async fn serve_listener_with_timeout<F>(
+    listener: TcpListener,
+    app: Router,
+    shutdown: F,
+    drain_timeout: std::time::Duration,
+) -> Result<(), AppError>
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    let server = axum::serve(listener, app).with_graceful_shutdown(async move {
+        let _ = shutdown_rx.await;
+    });
+    let mut server_task = tokio::spawn(async move { server.await });
+    tokio::pin!(shutdown);
+
+    tokio::select! {
+        result = &mut server_task => map_server_result(result),
+        _ = &mut shutdown => {
+            let _ = shutdown_tx.send(());
+            match tokio::time::timeout(drain_timeout, &mut server_task).await {
+                Ok(result) => map_server_result(result),
+                Err(_) => Err(AppError::Internal(
+                    "服务在 30 秒排空期限内未能优雅关闭".into(),
+                )),
+            }
+        }
+    }
+}
+
+fn map_server_result(
+    result: Result<Result<(), std::io::Error>, tokio::task::JoinError>,
+) -> Result<(), AppError> {
+    match result {
         Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => Err(AppError::Internal(error.to_string())),
-        Err(_) => Err(AppError::Internal(
-            "服务在 30 秒排空期限内未能优雅关闭".into(),
-        )),
+        Err(error) => Err(AppError::Internal(error.to_string())),
     }
 }
 
@@ -143,6 +176,26 @@ mod graceful_shutdown_tests {
         let response = String::from_utf8(response).unwrap();
         assert!(response.contains("200 OK"));
         assert!(response.contains("finished"));
+        server.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn server_does_not_apply_drain_timeout_before_shutdown() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_listener_with_timeout(
+            listener,
+            Router::new(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+            Duration::from_millis(50),
+        ));
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(!server.is_finished());
+
+        shutdown_tx.send(()).unwrap();
         server.await.unwrap().unwrap();
     }
 }
