@@ -40,6 +40,7 @@
             <span>GitHub</span>
           </el-button>
           <el-button
+            v-if="auth.desktop"
             text
             class="sidebar-action"
             :loading="updateChecking"
@@ -168,6 +169,7 @@ let periodicUpdateTimer: number | undefined;
 onMounted(() => {
   app.startClock();
   void app.loadVersion();
+  if (!auth.desktop) return;
   initialUpdateTimer = window.setTimeout(
     () => void checkForUpdatesSilently(),
     AUTO_UPDATE_INITIAL_DELAY_MS,

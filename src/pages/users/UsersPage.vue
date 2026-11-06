@@ -31,7 +31,11 @@
           row.api_token_prefix ? `${row.api_token_prefix}…` : '未设置'
         }}</template></el-table-column
       >
-      <el-table-column prop="created_at" label="创建时间" min-width="190" />
+      <el-table-column label="创建时间" min-width="190"
+        ><template #default="{ row }">{{
+          formatDateTime(row.created_at)
+        }}</template></el-table-column
+      >
       <el-table-column label="操作" width="210"
         ><template #default="{ row }">
           <el-button link type="primary" @click="openPassword(row)">重置密码</el-button>
@@ -133,6 +137,14 @@ const saving = ref(false);
 const token = ref('');
 const tokenVisible = ref(false);
 const changing = ref('');
+const formatDateTime = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+};
 const openCreate = () => {
   editing.value = null;
   username.value = '';

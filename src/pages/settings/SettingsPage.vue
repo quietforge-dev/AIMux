@@ -19,10 +19,10 @@
           <el-form-item v-if="auth.desktop" label="开机自启">
             <el-switch v-model="form.launch_at_login" />
           </el-form-item>
-          <el-form-item label="启用上游代理">
+          <el-form-item v-if="auth.desktop" label="启用上游代理">
             <el-switch v-model="form.upstream_proxy_enabled" />
           </el-form-item>
-          <el-form-item label="上游代理地址">
+          <el-form-item v-if="auth.desktop" label="上游代理地址">
             <el-input v-model="form.upstream_proxy_url" />
           </el-form-item>
 
