@@ -1,6 +1,8 @@
 # Linux 发布流程
 
-`scripts/deploy_linux.py` 采用单实例、双版本保留的发布方式。发布时不会覆盖当前正在运行的版本目录。
+`scripts/deploy_linux.py` 采用单实例、双版本保留的发布方式。发布时不会覆盖当前正在运行的版本目录。仓库提交不含部署凭据的 [deploy_linux.example.py](../scripts/deploy_linux.example.py)；首次使用时复制为 `scripts/deploy_linux.py`，再填写服务器地址、域名和管理员初始凭据。真实配置文件已加入 `.gitignore`，不要强制加入版本控制。
+
+也可以通过环境变量传入敏感信息，避免把密码和 API token 写入脚本：`AIMUX_ADMIN_USERNAME`、`AIMUX_ADMIN_PASSWORD`、`AIMUX_LOCAL_TOKEN`。服务器和域名分别可使用 `AIMUX_DEPLOY_HOST`、`AIMUX_DOMAIN` 配置；具体参数见 `python3 scripts/deploy_linux.example.py --help`。
 
 ## 服务器目录
 
