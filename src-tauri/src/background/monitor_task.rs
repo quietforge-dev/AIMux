@@ -96,8 +96,12 @@ async fn round(state: &Arc<AppState>) -> Result<(), crate::error::AppError> {
         }
     }
     completed.sort_unstable_by_key(|(index, _)| *index);
-    let results = completed.into_iter().map(|(_, result)| result).collect();
-    rebalance(&state.pool, results).await?;
+    let _results = completed
+        .into_iter()
+        .map(|(_, result)| result)
+        .collect::<Vec<_>>();
+    // Automatic post-round promotion is intentionally paused: changing priority here can
+    // affect account selection for live gateway requests immediately after a monitor round.
     Ok(())
 }
 
@@ -499,6 +503,9 @@ mod probe_tests {
     }
 }
 
+/// Optionally promote the best successfully monitored account after a full round.
+/// Kept separate so the policy can be reviewed and explicitly re-enabled later.
+#[allow(dead_code)]
 async fn rebalance(
     pool: &sqlx::SqlitePool,
     results: Vec<(String, String, bool, String)>,
