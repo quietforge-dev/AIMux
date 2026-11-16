@@ -176,12 +176,12 @@
     <el-dialog v-model="disableDialog" title="禁用账号" width="420px" destroy-on-close>
       <el-form label-width="90px">
         <el-form-item label="禁用时长">
-          <el-select v-model="disableDuration" style="width: 100%">
-            <el-option label="永久禁用" value="permanent" />
-            <el-option label="1 小时" value="1" />
-            <el-option label="3 小时" value="3" />
-            <el-option label="12 小时" value="12" />
-          </el-select>
+          <el-radio-group v-model="disableDuration" class="disable-duration-options">
+            <el-radio value="permanent">永久禁用</el-radio>
+            <el-radio value="1">1 小时</el-radio>
+            <el-radio value="3">3 小时</el-radio>
+            <el-radio value="12">12 小时</el-radio>
+          </el-radio-group>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -566,5 +566,15 @@ onMounted(load);
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+.disable-duration-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 14px;
+}
+
+.disable-duration-options :deep(.el-radio) {
+  margin-right: 0;
 }
 </style>
