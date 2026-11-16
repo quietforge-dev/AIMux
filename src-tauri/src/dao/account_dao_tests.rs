@@ -76,6 +76,54 @@ async fn selected(pool: &UserDb, model: Option<&str>, kind: &str) -> String {
 }
 
 #[tokio::test]
+async fn excludes_active_accounts_with_zero_priority_from_gateway_selection() {
+    let pool = pool().await;
+    let zero_priority = account(
+        &pool,
+        "zero-priority",
+        "openai",
+        Some("openai"),
+        "gpt-test",
+        0,
+        0.1,
+        true,
+    )
+    .await;
+    let eligible = account(
+        &pool,
+        "eligible",
+        "openai",
+        Some("openai"),
+        "gpt-test",
+        1,
+        0.8,
+        false,
+    )
+    .await;
+
+    assert_eq!(
+        selected(&pool, Some("gpt-test"), "openai").await,
+        eligible.id
+    );
+
+    set_status(&pool, &eligible.id, "disabled", None)
+        .await
+        .unwrap();
+    assert!(pick_one(&pool, Some("gpt-test"), "openai")
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        get(&pool, &zero_priority.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .priority,
+        0
+    );
+}
+
+#[tokio::test]
 async fn super_priority_overrides_cost_and_score_but_preserves_normal_monitor_comparison() {
     let pool = pool().await;
     let ordinary = account(

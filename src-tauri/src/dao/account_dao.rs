@@ -95,7 +95,7 @@ async fn pick_account(
     provider: Option<&str>,
 ) -> Result<Option<Account>, AppError> {
     expire_disabled(pool).await?;
-    let accounts = sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE user_id=?1 AND status='active' AND type=?2 ORDER BY priority DESC, multiplier ASC, monitor_average_duration_ms IS NULL ASC, monitor_average_duration_ms ASC, lower(name), id").bind(pool.user_id()).bind(account_type).fetch_all(pool.raw()).await?;
+    let accounts = sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE user_id=?1 AND status='active' AND type=?2 AND priority > 0 ORDER BY priority DESC, multiplier ASC, monitor_average_duration_ms IS NULL ASC, monitor_average_duration_ms ASC, lower(name), id").bind(pool.user_id()).bind(account_type).fetch_all(pool.raw()).await?;
     let mut eligible: Vec<Account> = accounts
         .into_iter()
         .filter(|a| supported(a.supported_models.as_deref(), model))
