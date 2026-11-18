@@ -20,3 +20,4 @@ scripts/deploy_linux.py
 .venv/
 aimux.egg-info/
 docs/remark.txt
+scripts/deploy_linux.py
