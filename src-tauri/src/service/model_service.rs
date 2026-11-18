@@ -1,9 +1,11 @@
 use crate::database::UserDb;
 use crate::{dao::model_dao, error::AppError, schema::model_schema::ModelView};
 
-const DEFAULTS: [(&str, &str, &str); 7] = [
+const DEFAULTS: [(&str, &str, &str); 9] = [
     ("openai", "openai", "gpt-6-astra"),
+    ("openai", "openai", "gpt-6.2-astra"),
     ("openai", "openai", "gpt-6.1-sol"),
+    ("openai", "openai", "gpt-6.2-sol"),
     ("openai", "openai", "gpt-6.1-terra"),
     ("openai", "openai", "gpt-6-luna"),
     ("anthropic", "anthropic", "claude-sonnet-5-5"),
