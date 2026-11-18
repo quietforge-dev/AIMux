@@ -19,3 +19,4 @@ src-tauri/keys/
 .venv/
 aimux.egg-info/
 docs/remark.txt
+scripts/deploy_linux.py
